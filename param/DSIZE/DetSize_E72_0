@@ -1,0 +1,61 @@
+#
+#  DetSize_E72_0
+#
+#  note:
+#    The size is not half but full length.
+#    The unit is mm.
+#
+#______________________________________________________________________________
+# Name		X	Y	Z
+#  or
+# Name		Rin	Rout	DZ
+#  or
+# Name			Value
+#
+World		4000	3000	8000
+
+### Counters
+Bh2Seg		14.0	100.0	5.0
+Bh2SegWidth	14 14 14 14 14 14 14 14 14 14 14 14
+BacRadiator	115	115	12.4
+KvcRadiator	26	120	10.0
+BvhURadiator    10    60    2.0   # (X x Y x Z) = (10 x 60 x 2) mm^3
+BvhDRadiator    10     140   2.0  # (X x Y x Z) = (2 x 10 x 140) mm^3
+T0Radiator 32 160 10
+
+### Target
+Target	 	0.0	80.0	100.0
+TargetKapton	80.0	80.5	100.0
+TargetGFRP	94.0	97.0	100.0
+
+### HypTPC
+TpcGasVessel		634	654	620
+TpcGasVesselWindow	246.9	540	0.1
+TargetHolder		107.0	113.0	431
+TargetHolderYoffset	102.4 # holder bottom to beam center
+TargetHolderWindowPhiDz	32.0	116.0	100.0
+TpcP10Volume		0.0	634.0	606.0
+TpcFieldCage		584.0	586.0	562.0
+TpcEffectiveVolume	0.0	500.0	562.0
+
+TpcPadConfigure		3
+TpcPadLengthIn		9.0
+TpcPadLengthOut		12.5
+TpcPadGap		0.5
+
+TpcRin			0.0
+TpcRout			574.0
+TpcDz			302.0 # Height of effective area
+TpcPadCenterZ		-143.0 # upstream from HypTPC center
+### HTOF
+HtofSeg		68.0	800.0	10.0
+### SHS
+ShsField	800.0	800.0	1200.0
+ShsFieldOffset	0.0	0.0	0.0
+
+VP1		800	800	0.001
+VP2		800	800	0.001
+VP3		800	800	0.001
+VP4		800	800	0.001
+VP5		800	800	0.001
+VP6		800	800	0.001

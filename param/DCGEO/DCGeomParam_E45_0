@@ -1,0 +1,53 @@
+##
+#  file: DCGeomParam_E72_0
+#  date: 2023.03.07
+#  note:
+#    Target position is FF
+#    SHS magnet center is +143.0mm from FF.
+#
+#    2023.03.07 first version for E72
+#
+##############################################################################
+# Name Explaination (use DCGeomRecord as refference):
+#             X:      x [mm]
+#             Y:      y [mm]
+#             Z:      z [mm]
+#             TA:     tilt angle [deg]
+#             RA1:    rotation angle along x-axis [deg]
+#             RA2:    rotation angle along y-axis [deg]
+#             L:      local length from VI or VO [mm]
+#             Res:    resolution [mm]
+#             W0:     central wire # (1-origin)
+#             dXdW:   sense wire pitch [mm]
+#             Ofs:    offset [mm] (to be tuned by analysis)
+#
+#############################################################################
+#
+# Id	Name	X	Y	Z	TA	RA1	RA2	L	Res	W0	dXdW	Ofs
+#
+### Counters
+101	BH2	-14.00	0.00	-700.	0.0	0.0	0.0	-700.	0.00	4.5	14.0	0.0
+102	BAC	-14.00	0.00	-550.	0.0	0.0	0.0	-550.0	0.00	1.0	0.0	0.0
+103	KVC	160.00	0.00	450.	0.0	0.0	0.0	450.0	0.00	1.0	0.0	0.0
+#
+130  K18Target -50.674 0.11	-1059.2	0.0	0.0	0.0	1879.2	0.00	1.0	1.0	0.0
+500  SHSTarget 0.0	0.0	-143.0	0.0	0.0	0.0	0.0	0.00	1.0	1.0	0.0
+501	HypTPC	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0	0.0
+502	HTOF	0.0	12.0	0.0	0.0	0.0	0.0	337.0	0.0	0.0	68.0	0.0
+504	BLC2	0.0	0.0	-130.0	0.0	0.0	0.0	-130.0	0.0	0.0	0.0	0.0
+
+
+### Virtual Planes
+#VP1	BH2	-700
+#VP2	BAC	-550
+#VP3	HTOFu	-342
+#VP4	TGT	-143
+#VP5	HTOFd	342
+#VP6	KVC	450
+
+1001	VP1	0.0	0.0	-700.0	0.0	0.0	0.0	-700.0	0.0	0.0	0.0	0.0
+1002	VP2	0.0	0.0	-550.0	0.0	0.0	0.0	-550.0	0.0	0.0	0.0	0.0
+1003	VP3	0.0	0.0	-342.0	0.0	0.0	0.0	-342.0	0.0	0.0	0.0	0.0
+1004	VP4	0.0	0.0	-143.0	0.0	0.0	0.0	-143.0	0.0	0.0	0.0	0.0
+1005	VP5	0.0	0.0	342.0	0.0	0.0	0.0	342.0	0.0	0.0	0.0	0.0
+1006	VP6	0.0	0.0	450.0	0.0	0.0	0.0	450.0	0.0	0.0	0.0	0.0
