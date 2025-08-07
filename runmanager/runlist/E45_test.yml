@@ -1,0 +1,30 @@
+#
+# RUN LIST (YAML format)
+#
+#   queue   : bsub queue (eg. s, l, etc...)
+#   qmerge  : bsub queue for merging job to command "hadd"
+#   nevent  : number of events
+#   unit    : dividing event unit
+#   nproc   : number of process for merging (up to 18)
+#   buff    : intermediate root files will be placed here
+#             if not set, use the same "root" directory
+#   bin     : path to executable binary
+#   conf    : path to conf directory/file from the work directory
+#   root    : path to the output ROOT output directory/file
+#
+#______________________________________________________________________________
+DEFAULT:
+  queue: s
+  qmerge: s
+  nruns: 50
+  unit:  10000
+  nproc: 18
+  buff:  /ghi/fs02/orig_root_fs02/had/sks/Users/jaejin/buffer
+  bin:   bin/G4HypTPC
+  conf:  param/conf/e72_beam.conf
+  root:  /gpfs/group/had/sks/Users/jaejin/E72geant4/k18geant4/hyptpc_E45/root/
+
+#______________________________________________________________________________
+RUN:
+  TPCPadOn:
+    conf: param/conf/e72_beam.conf
