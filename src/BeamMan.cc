@@ -76,8 +76,8 @@ BeamMan::Initialize()
 
   for(Long64_t i=0, n=tree->GetEntries(); i<n; ++i){
     tree->GetEntry(i);
-    beam.pos.set(beam.x + x0, beam.y, z0);
-    // beam.pos.set(beam.x + x0, beam.y, beam.z);
+    //beam.pos.set(beam.x + x0, beam.y, z0);
+     beam.pos.set(beam.x + x0, beam.y, beam.z);
     beam.pos *= CLHEP::mm;
     G4double scale = p0/0.907;
     beam.mom.set(beam.px * scale , beam.py * scale, beam.pz * scale);
