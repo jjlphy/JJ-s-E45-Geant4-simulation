@@ -1,0 +1,38 @@
+{ decls }
+namespace std {  }
+
+[ libG4HypTPC.so ]
+# List of selected classes
+class vector<TParticle>
+class vector<TVector3>
+class vector<std::vector<Bool_t> >
+class vector<std::vector<Char_t*> >
+class vector<std::vector<Char_t> >
+class vector<std::vector<Double_t> >
+class vector<std::vector<Int_t> >
+class vector<std::vector<Long64_t> >
+class vector<std::vector<Long_t> >
+class vector<std::vector<Short_t> >
+class vector<std::vector<UChar_t> >
+class vector<std::vector<UInt_t> >
+class vector<std::vector<ULong64_t> >
+class vector<std::vector<ULong_t> >
+class vector<std::vector<UShort_t> >
+class vector<std::vector<const Char_t*> >
+class vector<std::vector<void*> >
+class vector<vector<Long64_t> >
+class vector<vector<ULong64_t> >
+class vector<vector<bool> >
+class vector<vector<char const*> >
+class vector<vector<char*> >
+class vector<vector<char> >
+class vector<vector<const char*> >
+class vector<vector<double> >
+class vector<vector<int> >
+class vector<vector<long> >
+class vector<vector<short> >
+class vector<vector<unsigned char> >
+class vector<vector<unsigned int> >
+class vector<vector<unsigned long> >
+class vector<vector<unsigned short> >
+class vector<vector<void*> >

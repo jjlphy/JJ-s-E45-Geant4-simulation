@@ -37,8 +37,6 @@ file(REMOVE_RECURSE
   "CMakeFiles/G4HypTPC.dir/src/DetectorConstruction.cc.o.d"
   "CMakeFiles/G4HypTPC.dir/src/DetectorConstructionE42.cc.o"
   "CMakeFiles/G4HypTPC.dir/src/DetectorConstructionE42.cc.o.d"
-  "CMakeFiles/G4HypTPC.dir/src/Dict.cc.o"
-  "CMakeFiles/G4HypTPC.dir/src/Dict.cc.o.d"
   "CMakeFiles/G4HypTPC.dir/src/DiffCrossSection.cc.o"
   "CMakeFiles/G4HypTPC.dir/src/DiffCrossSection.cc.o.d"
   "CMakeFiles/G4HypTPC.dir/src/DiffCrossSectionMan.cc.o"
