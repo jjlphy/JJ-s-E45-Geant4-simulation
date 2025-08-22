@@ -31,3 +31,9 @@ cmake-build-*/
 bin/
 fieldmap/
 
+.build/
+bin/
+*.root
+*.pcm
+*.so
+fieldmap/

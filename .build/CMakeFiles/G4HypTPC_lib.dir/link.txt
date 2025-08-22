@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC   -pipe -fsigned-char -pthread -shared -Wl,-soname,libG4HypTPC_lib.so -o libG4HypTPC_lib.so CMakeFiles/G4HypTPC_lib.dir/G4HypTPC_dict.cxx.o   -L/sw/packages/root/6.32.04/lib 

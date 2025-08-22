@@ -1,2 +1,0 @@
-# Hashes of file build rules.
-945f0cf04d991ec06290691a39ce85f2 G4HypTPC_dict.cxx

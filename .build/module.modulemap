@@ -1,8 +1,0 @@
-module "G4HypTPC" {
-  requires cplusplus
-  module "TParticle.h" { header "TParticle.h" export * }
-  module "TVector3.h" { header "TVector3.h" export * }
-  link "libG4HypTPC.so"
-  export *
-}
-
