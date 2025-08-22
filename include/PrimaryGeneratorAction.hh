@@ -149,6 +149,9 @@ public:
   void     GenerateE72KaonMinusProtonPhaseSpace(G4Event* anEvent); // 7207
   void     GenerateE72KaonZeroShortNeutronPhaseSpace(G4Event* anEvent); // 7208
   void     GenerateE72ProtonForMachineLearning(G4Event* anEvent); // 7209
+
+  void     GenerateE72PionMinusFromBeamFile(G4Event* anEvent); // #7217 for E45 
+
   // KKpp
   void     GenerateKKppLL1(G4Event* anEvent);//#3001
   void     GenerateKKppLL2(G4Event* anEvent);//#3002

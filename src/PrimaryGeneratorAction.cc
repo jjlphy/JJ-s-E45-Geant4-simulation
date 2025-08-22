@@ -211,6 +211,9 @@ PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
   case 7207: GenerateE72KaonMinusProtonPhaseSpace(anEvent); break;
   case 7208: GenerateE72KaonZeroShortNeutronPhaseSpace(anEvent); break;
   case 7209: GenerateE72ProtonForMachineLearning(anEvent); break;
+
+  case 7217: GenerateE72PionMinusFromBeamFile(anEvent); break;  // π− beam-through from BEAM file
+
   default:
     G4cerr << " * Generator number error : " << next_generator << G4endl;
     break;
@@ -3717,6 +3720,38 @@ PrimaryGeneratorAction::GenerateE72OldBeamData(G4Event* anEvent)
   m_particle_gun->SetParticleEnergy(p.e() - mass);
   m_particle_gun->SetParticlePosition(v.v());
   m_particle_gun->GeneratePrimaryVertex(anEvent);
+  gAnaMan.SetPrimaryParticle(0, pdg, p, v);
+}
+//-----------------------------------------------------------7217 for E45
+
+//_____________________________________________________________________________
+// case 7217 : E72 beam file에서 읽은 궤적/모멘텀을 그대로 쓰되 입자만 pi-로 발사
+void
+PrimaryGeneratorAction::GenerateE72PionMinusFromBeamFile(G4Event* anEvent)
+{
+  // 입자, PDG, 질량
+  static const auto PionMinus = particleTable->FindParticle("pi-");
+  static const auto pdg  = PionMinus->GetPDGEncoding();
+  static const auto mass = PionMinus->GetPDGMass();
+
+  // BeamMan에서 채워진 빔 4-벡터 구성 (m_beam은 GeneratePrimaries() 초반에서 갱신됨)
+  G4LorentzVector p(m_beam->mom,
+                    std::sqrt(m_beam->mom.mag()*m_beam->mom.mag() + mass*mass));
+  G4LorentzVector v(m_beam->pos, 0.0);
+
+  // (분석 변수: 이름이 Kaon이지만 내부에서 단순 수치로 쓰이니 안전하게 초기화)
+  gAnaMan.SetMomKaonLab(0.0);
+  gAnaMan.SetCosTheta(-9999.0);
+  gAnaMan.SetCosThetaLambda(-9999.0);
+
+  // 총알 장전: pi- 로, 빔 파일에서 읽은 방향/에너지/버텍스 그대로 사용
+  m_particle_gun->SetParticleDefinition(m_PionMinus);
+  m_particle_gun->SetParticleMomentumDirection(p.v());   // 방향
+  m_particle_gun->SetParticleEnergy(p.e() - mass);       // 운동에너지
+  m_particle_gun->SetParticlePosition(v.v());            // 위치
+  m_particle_gun->GeneratePrimaryVertex(anEvent);
+
+  // 기록
   gAnaMan.SetPrimaryParticle(0, pdg, p, v);
 }
 
