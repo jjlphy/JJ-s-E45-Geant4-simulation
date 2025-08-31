@@ -1748,48 +1748,53 @@ DetectorConstruction::ConstructFieldOutline()
 }
 
 //_____________________________________________________________________________
-void
-DetectorConstruction::ConstructVP()
+// DetectorConstruction::ConstructVP()
+
+void DetectorConstruction::ConstructVP()
 {
   using CLHEP::mm;
   using CLHEP::deg;
-  G4int i = 1;
-  try {
-    while (true) {
-      G4String name = "VP"+std::to_string(i);
+
+  // 1) 여기서 ‘활성화’할 VP 번호만 골라주세요.
+  //    지금은 VP4, VP5, VP6만 생성 (VP1~3 비활성화)
+  const std::vector<int> enabledVP = {4, 5, 6};
+
+  for (int i : enabledVP) {
+    try {
+      G4String name = "VP" + std::to_string(i);
       const auto& ra2 = gGeom.GetRotAngle2(name)*deg;
       const auto& half_size = gSize.GetSize(name)*mm/2.;
       auto pos = gGeom.GetGlobalPosition(name);
+
+      // (중요) mother 여유를 줄여 겹침 여지 최소화 (1mm -> 0.1mm)
       auto mother_solid = new G4Box(name+"MotherSolid",
-                                    half_size.x() + 1*mm,
-                                    half_size.y() + 1*mm,
-                                    half_size.z() + 1*mm);
+                                    half_size.x() + 0.1*mm,
+                                    half_size.y() + 0.1*mm,
+                                    half_size.z() + 0.1*mm);
       auto mother_lv = new G4LogicalVolume(mother_solid,
                                            m_material_map["Air"],
                                            name+"MotherLV");
       auto rot = new G4RotationMatrix;
       rot->rotateY(- ra2 - m_rotation_angle);
       pos.rotateY(m_rotation_angle);
-      new G4PVPlacement(rot, pos, mother_lv,
-                        name+"MotherPV", m_world_lv, false, 0, m_check_overlaps);
+
+      new G4PVPlacement(rot, pos, mother_lv, name+"MotherPV",
+                        m_world_lv, false, 0, m_check_overlaps);
       mother_lv->SetVisAttributes(G4VisAttributes::GetInvisible());
-      auto vp_solid = new G4Box(name+"Solid",
-                                half_size.x(), half_size.y(), half_size.z());
-      auto vp_lv = new G4LogicalVolume(vp_solid, m_material_map["Air"],
-                                       name+"LV");
+
+      auto vp_solid = new G4Box(name+"Solid", half_size.x(), half_size.y(), half_size.z());
+      auto vp_lv = new G4LogicalVolume(vp_solid, m_material_map["Air"], name+"LV");
       new G4PVPlacement(nullptr, G4ThreeVector(), vp_lv, name+"PV",
                         mother_lv, false, i, m_check_overlaps);
       vp_lv->SetVisAttributes(G4Colour::Yellow());
+
       static auto vpSD = new VPSD("VP");
       AddNewDetector(vpSD);
       vp_lv->SetSensitiveDetector(vpSD);
-      ++i;
+
+    } catch (const std::exception& e) {
+      // 해당 VP가 DCGeomParam에 없으면 그냥 건너뜀
+      continue;
     }
-  } catch (const std::exception& e) {
-#if 0
-    G4cout << FUNC_NAME // << " " << e.what()
-           << G4endl
-           << "   " << i-1 << " VPs constructed." << G4endl;
-#endif
   }
 }
