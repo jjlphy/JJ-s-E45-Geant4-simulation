@@ -1,7 +1,7 @@
 // make_beam_profile_0.98GeV.C
 void JJ_make_beam_profile_0_98GeV() {
     // 1. 새로운 ROOT 파일을 생성합니다. (파일 이름에 운동량 명시)
-    TFile *new_file = new TFile("beam_profile_0.98GeV.root", "RECREATE");
+    TFile *new_file = new TFile("beam_profile_0_98GeV.root", "RECREATE");
     TTree *new_tree = new TTree("tr", "Ideal Gaussian Beam Profile for E45 at 0.98GeV/c");
 
     // 2. TTree에 저장할 C++ 변수들을 선언합니다.
