@@ -213,6 +213,8 @@ PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
   case 7209: GenerateE72ProtonForMachineLearning(anEvent); break;
 
   case 7217: GenerateE72PionMinusFromBeamFile(anEvent); break;  // π− beam-through from BEAM file
+  case 7218: GenerateE45_2PiN_PipPim_n_PhaseSpace(anEvent); break; // π+ π− n
+  case 7219: GenerateE45_2PiN_PimPi0_p_PhaseSpace(anEvent); break; // π− π0  p
 
   default:
     G4cerr << " * Generator number error : " << next_generator << G4endl;
@@ -3754,6 +3756,140 @@ PrimaryGeneratorAction::GenerateE72PionMinusFromBeamFile(G4Event* anEvent)
   // 기록
   gAnaMan.SetPrimaryParticle(0, pdg, p, v);
 }
+
+//_____________________________________________________________________________
+// 7218 : pi- p -> pi+ pi- n  (flat 3-body phase space)
+void PrimaryGeneratorAction::GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEvent)
+{
+  // -- masses (GeV)
+  const double mPip = m_PionPlus ->GetPDGMass()/GeV; // ~= 0.13957
+  const double mPim = m_PionMinus->GetPDGMass()/GeV; // ~= 0.13957
+  const double mN   = m_Neutron   ->GetPDGMass()/GeV; // ~= 0.93957
+  const double mP   = m_Proton    ->GetPDGMass()/GeV; // for initial target
+
+  // -- beam 3-momentum from BeamMan (GeV/c)
+  TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
+  if (gAnaMan.GetDoCombine()) {
+    G4ThreeVector next = gAnaMan.GetNextMom();
+    p_beam.SetXYZ(next.getX(), next.getY(), next.getZ());
+  }
+
+  // -- (optional) save beam info in MeV style (E72 관례 유지)
+  G4ThreeVector v3_beam = gAnaMan.GetNextPos();
+  G4LorentzVector vL_beam(v3_beam);
+  G4ThreeVector p3_beam(p_beam.X()*1000, p_beam.Y()*1000, p_beam.Z()*1000); // MeV/c
+  G4LorentzVector pL_beam(p3_beam, std::sqrt(p3_beam.mag2() + std::pow(mPim*1000,2)));
+  gAnaMan.SetBeamInfo(-211, pL_beam, vL_beam); // -211: pi-
+
+  // -- initial 4-vectors in Lab (GeV)
+  TLorentzVector LVpi (p_beam, TMath::Hypot(p_beam.Mag(), mPim));
+  TLorentzVector LVpro(0.,0.,0., mP);
+  TLorentzVector W = LVpi + LVpro;
+
+  // -- 3-body threshold: pi+ + pi- + n
+  const double Wabs = W.M();
+  const double Wth  = mPip + mPim + mN;
+  const G4bool above = (Wabs > Wth);
+  gAnaMan.SetThresholdCondition(above);
+  if (!above) return;
+
+  // -- 3-body flat phase space
+  static const int n_dau = 3;
+  double masses[n_dau] = { mPip, mPim, mN };
+  TGenPhaseSpace event;
+  event.SetDecay(W, n_dau, masses);
+  event.Generate(); // CSFlat=1이면 그대로; 가중치/모형은 추후 확장
+
+  // -- vertex
+  G4ThreeVector vtx = gAnaMan.GetVertexPos();
+  G4LorentzVector v(vtx);
+
+  // -- shoot: order = pi+, pi-, n (PDG: +211, -211, 2112)
+  struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
+    { m_PionPlus ,  +211 },
+    { m_PionMinus,  -211 },
+    { m_Neutron  ,  2112 }
+  };
+
+  for (int i=0;i<n_dau;++i) {
+    const TLorentzVector* d = event.GetDecay(i); // GeV basis
+    G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
+    m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
+    m_particle_gun->SetParticleMomentumDirection(p.v());
+    m_particle_gun->SetParticleEnergy(p.e() - p.m());
+    m_particle_gun->SetParticlePosition(v.v());
+    m_particle_gun->GeneratePrimaryVertex(anEvent);
+    gAnaMan.SetPrimaryParticle(i, outs[i].pdg, p, v);
+    m_primary_pdg[i] = outs[i].pdg;
+  }
+}
+
+//_____________________________________________________________________________
+// 7219 : pi- p -> pi- pi0 p  (flat 3-body phase space)
+void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent)
+{
+  // -- masses (GeV)
+  const double mPim = m_PionMinus->GetPDGMass()/GeV; // ~= 0.13957
+  const double mPi0 = m_PionZero ->GetPDGMass()/GeV; // ~= 0.13498
+  const double mP   = m_Proton   ->GetPDGMass()/GeV; // ~= 0.93827
+
+  // -- beam 3-momentum (GeV/c)
+  TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
+  if (gAnaMan.GetDoCombine()) {
+    G4ThreeVector next = gAnaMan.GetNextMom();
+    p_beam.SetXYZ(next.getX(), next.getY(), next.getZ());
+  }
+
+  // -- (optional) save beam info (MeV style)
+  G4ThreeVector v3_beam = gAnaMan.GetNextPos();
+  G4LorentzVector vL_beam(v3_beam);
+  G4ThreeVector p3_beam(p_beam.X()*1000, p_beam.Y()*1000, p_beam.Z()*1000);
+  G4LorentzVector pL_beam(p3_beam, std::sqrt(p3_beam.mag2() + std::pow(mPim*1000,2)));
+  gAnaMan.SetBeamInfo(-211, pL_beam, vL_beam);
+
+  // -- initial in Lab
+  TLorentzVector LVpi (p_beam, TMath::Hypot(p_beam.Mag(), mPim));
+  TLorentzVector LVpro(0.,0.,0., mP);
+  TLorentzVector W = LVpi + LVpro;
+
+  // -- 3-body threshold: pi- + pi0 + p
+  const double Wabs = W.M();
+  const double Wth  = mPim + mPi0 + mP;
+  const G4bool above = (Wabs > Wth);
+  gAnaMan.SetThresholdCondition(above);
+  if (!above) return;
+
+  // -- 3-body flat phase space
+  static const int n_dau = 3;
+  double masses[n_dau] = { mPim, mPi0, mP }; // pi-, pi0, p
+  TGenPhaseSpace event;
+  event.SetDecay(W, n_dau, masses);
+  event.Generate();
+
+  // -- vertex
+  G4ThreeVector vtx = gAnaMan.GetVertexPos();
+  G4LorentzVector v(vtx);
+
+  // -- shoot: order = pi-, pi0, p (PDG: -211, 111, 2212)
+  struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
+    { m_PionMinus,  -211 },
+    { m_PionZero ,   111 },
+    { m_Proton   ,  2212 }
+  };
+
+  for (int i=0;i<n_dau;++i) {
+    const TLorentzVector* d = event.GetDecay(i);
+    G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
+    m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
+    m_particle_gun->SetParticleMomentumDirection(p.v());
+    m_particle_gun->SetParticleEnergy(p.e() - p.m());
+    m_particle_gun->SetParticlePosition(v.v());
+    m_particle_gun->GeneratePrimaryVertex(anEvent);
+    gAnaMan.SetPrimaryParticle(i, outs[i].pdg, p, v);
+    m_primary_pdg[i] = outs[i].pdg;
+  }
+}
+
 
 //_____________________________________________________________________________
 //case 7202
