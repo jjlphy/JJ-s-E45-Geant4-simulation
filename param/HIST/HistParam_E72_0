@@ -5,15 +5,15 @@
 #
 # TH1
 #
-# key		nbinsx	xlow	xup
+# key       nbinsx  xlow    xup
 
-BH2Nhits	9	-0.5	8.5
-BH2HitPat	8	-0.5	7.5
-BH2X		100	-100	100
-BH2Y		100	-100	100
-BH2Z		2000	-1000	1000
-BH2U		100	-0.2	0.2
-BH2V		100	-0.1	0.1
+BH2Nhits    16  -0.5    15.5
+BH2HitPat   15  -0.5    14.5
+BH2X        150 -150    150
+BH2Y        100 -100    100
+BH2Z        2000    -1000   1000
+BH2U        100 -0.2    0.2
+BH2V        100 -0.1    0.1
 
 BACNhits	2	-0.5	1.5
 BACHitPat	1	-0.5	0.5
