@@ -151,8 +151,8 @@ public:
   void     GenerateE72ProtonForMachineLearning(G4Event* anEvent); // 7209
 
   void     GenerateE72PionMinusFromBeamFile(G4Event* anEvent); // #7217 for E45
-  void GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEvent); // 7218: π⁻p→π⁺π⁻n
-  void GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent); // 7219: π⁻p→π⁻π⁰p
+  void     GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEvent); // 7218: π⁻p→π⁺π⁻n
+  void     GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent); // 7219: π⁻p→π⁻π⁰p
 
 
   // KKpp

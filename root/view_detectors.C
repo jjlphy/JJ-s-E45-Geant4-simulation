@@ -9,7 +9,7 @@
 #include "TMath.h"
 
 void view_detectors() {
-    TFile *f = new TFile("E45_original_980.root");
+    TFile *f = new TFile("../E45_with_2pi.root");
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }
