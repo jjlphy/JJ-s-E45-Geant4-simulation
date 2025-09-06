@@ -20,7 +20,7 @@ const Int_t DetIdBVH_D     =  12; //BVH upstream 추가
 const Int_t DetIdT0     = 13; // T0 추가
 
 const Int_t NumOfSegBH1  = 11;
-const Int_t NumOfSegBH2  = 11;
+const Int_t NumOfSegBH2  = 15;
 const Int_t NumOfSegBAC  =  1;
 const Int_t NumOfSegHTOF = 32;
 const Int_t NumOfSegKVC  = 8;
