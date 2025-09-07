@@ -61,7 +61,7 @@ void draw_bvh_d_overlay() {
 // --- 메인 함수 ---
 void view_detectors() {
     // 0) 파일/트리 열기
-    TFile *f = new TFile("../E45_with_2pi.root");
+    TFile *f = new TFile("E45_newprofile8_980.root");
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }
@@ -128,7 +128,7 @@ void view_detectors() {
     c_others->cd(1);
     h_bh2->Draw("COLZ");
     {
-        const double segW   = 14.0; const int nSeg = 15; const double cx = 38.0;
+        const double segW   = 14.0; const int nSeg = 15; const double cx = 64.0;
         const double halfW  = 0.5 * segW * nSeg; // 105
         const double xL = cx - halfW; // 12 - 105 = -93
         const double xR = cx + halfW; // 12 + 105 = +117
