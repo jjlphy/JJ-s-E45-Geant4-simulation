@@ -1,4 +1,4 @@
-// view_detectors_final_with_all_labels_v2.C
+// view_detectors_final_with_all_labels_v4.C
 
 #include "TFile.h"
 #include "TTree.h"
@@ -37,7 +37,7 @@ void draw_bvh_u_overlay() {
 
 // BVH_D (VP5, 6, 7, 8) 오버레이 그리기 함수
 void draw_bvh_d_overlay() {
-    double seg_w = 10.0, seg_h = 140.0; int n_segs = 100;
+    double seg_w = 10.0, seg_h = 140.0; int n_segs = 180;
     double total_w = n_segs * seg_w, start_x = -total_w / 2.0;
     int center_idx = n_segs / 2;
     for (int i = 0; i < n_segs; ++i) {
@@ -61,35 +61,30 @@ void draw_bvh_d_overlay() {
 // --- 메인 함수 ---
 void view_detectors() {
     // 0) 파일/트리 열기
-    TFile *f = new TFile("E45_newprofile4_980.root");
+    TFile *f = new TFile("../E45_with_2pi.root");
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }
 
     // 1) 히스토그램 생성
-    // Z 위치 정보 (DCGeomParam 파일 기준)
     std::map<int, double> vp_z_positions = {
         {1, -1000.0}, {2, -900.0}, {3, -800.0}, {4, -760.0},
         {5, 840.0},   {6, 900.0},  {7, 950.0},  {8, 1000.0}
     };
 
-    // DetSize 파일 기준 VP 크기 (X, Y full length)
-    // VP1-4: 800x800, VP5-8: 1000x1000
-    // 히스토그램 범위는 detector 크기보다 약간 넓게 설정
-    TH2D *h_vp1 = new TH2D("h_vp1", Form("BVH_U region(VP1, z=%.0f); X [mm]; Y [mm]", vp_z_positions[1]), 200, -410, 410, 200, -410, 410);
-    TH2D *h_vp2 = new TH2D("h_vp2", Form("BVH_U region(VP2, z=%.0f); X [mm]; Y [mm]", vp_z_positions[2]), 200, -410, 410, 200, -410, 410);
-    TH2D *h_vp3 = new TH2D("h_vp3", Form("BVH_U region(VP3, z=%.0f); X [mm]; Y [mm]", vp_z_positions[3]), 200, -410, 410, 200, -410, 410);
-    TH2D *h_vp4 = new TH2D("h_vp4", Form("BVH_U region(VP4, z=%.0f); X [mm]; Y [mm]", vp_z_positions[4]), 200, -410, 410, 200, -410, 410);
+    TH2D *h_vp1 = new TH2D("h_vp1", Form("BVH_U region(VP1, z=%.0f); X [mm]; Y [mm]", vp_z_positions[1]), 200, -300, 300, 200, -200, 200);
+    TH2D *h_vp2 = new TH2D("h_vp2", Form("BVH_U region(VP2, z=%.0f); X [mm]; Y [mm]", vp_z_positions[2]), 200, -300, 300, 200, -200, 200);
+    TH2D *h_vp3 = new TH2D("h_vp3", Form("BVH_U region(VP3, z=%.0f); X [mm]; Y [mm]", vp_z_positions[3]), 200, -300, 300, 200, -200, 200);
+    TH2D *h_vp4 = new TH2D("h_vp4", Form("BVH_U region(VP4, z=%.0f); X [mm]; Y [mm]", vp_z_positions[4]), 200, -300, 300, 200, -200, 200);
 
-    TH2D *h_vp5 = new TH2D("h_vp5", Form("BVH_D region(VP5, z=%.0f); X [mm]; Y [mm]", vp_z_positions[5]), 200, -510, 510, 200, -510, 510);
-    TH2D *h_vp6 = new TH2D("h_vp6", Form("BVH_D region(VP6, z=%.0f); X [mm]; Y [mm]", vp_z_positions[6]), 200, -510, 510, 200, -510, 510);
-    TH2D *h_vp7 = new TH2D("h_vp7", Form("BVH_D region(VP7, z=%.0f); X [mm]; Y [mm]", vp_z_positions[7]), 200, -510, 510, 200, -510, 510);
-    TH2D *h_vp8 = new TH2D("h_vp8", Form("BVH_D region(VP8, z=%.0f); X [mm]; Y [mm]", vp_z_positions[8]), 200, -510, 510, 200, -510, 510);
+    TH2D *h_vp5 = new TH2D("h_vp5", Form("BVH_D region(VP5, z=%.0f); X [mm]; Y [mm]", vp_z_positions[5]), 400, -910, 910, 200, -310, 310);
+    TH2D *h_vp6 = new TH2D("h_vp6", Form("BVH_D region(VP6, z=%.0f); X [mm]; Y [mm]", vp_z_positions[6]), 400, -910, 910, 200, -310, 310);
+    TH2D *h_vp7 = new TH2D("h_vp7", Form("BVH_D region(VP7, z=%.0f); X [mm]; Y [mm]", vp_z_positions[7]), 400, -910, 910, 200, -310, 310);
+    TH2D *h_vp8 = new TH2D("h_vp8", Form("BVH_D region(VP8, z=%.0f); X [mm]; Y [mm]", vp_z_positions[8]), 400, -910, 910, 200, -310, 310);
 
     TH2D *h_t0  = new TH2D("h_t0",  "T0 Hit Distribution; X [mm]; Y [mm]", 200, -150, 150, 200, -150, 150);
-    TH2D *h_bh2 = new TH2D("h_bh2", "BH2 Hit Distribution; X [mm]; Y [mm]", 200, -150, 150, 200, -150, 150);
+    TH2D *h_bh2 = new TH2D("h_bh2", "BH2 Hit Distribution; X [mm]; Y [mm]", 200, -100, 200, 200, -100, 100);
     
-    // 히스토그램 포인터 맵 (나중에 그리기 편하게)
     std::map<int, TH2D*> hist_map = {
         {1, h_vp1}, {2, h_vp2}, {3, h_vp3}, {4, h_vp4},
         {5, h_vp5}, {6, h_vp6}, {7, h_vp7}, {8, h_vp8}
@@ -104,31 +99,40 @@ void view_detectors() {
     tree->Draw("T0.Vy():T0.Vx() >> h_t0",  "", "goff");
     tree->Draw("BH2.Vy():BH2.Vx() >> h_bh2", "", "goff");
 
-    // 3) 캔버스 생성 및 그리기 (총 10개 plot, 2x5)
-    TCanvas *c1 = new TCanvas("c1", "Detector Hit Distributions", 1000, 2000);
-    c1->Divide(2, 5);
+    // 3) 캔버스 생성 및 그리기 (3개의 다른 창으로 분리)
+    TCanvas *c_bvh_u = new TCanvas("c_bvh_u", "BVH U Region (VP1-4)", 1200, 1200);
+    c_bvh_u->Divide(2, 2);
 
-    // VP 1-4 그리기 (BVH_U)
+    TCanvas *c_bvh_d = new TCanvas("c_bvh_d", "BVH D Region (VP5-8)", 1200, 1200);
+    c_bvh_d->Divide(2, 2);
+
+    TCanvas *c_others = new TCanvas("c_others", "Other Detectors", 1200, 600);
+    c_others->Divide(2, 1);
+
+
+    // VP 1-4 그리기 (BVH_U 창)
     for (int i = 1; i <= 4; ++i) {
-        c1->cd(i);
+        c_bvh_u->cd(i);
         hist_map[i]->Draw("COLZ");
         draw_bvh_u_overlay();
     }
 
-    // VP 5-8 그리기 (BVH_D)
+    // VP 5-8 그리기 (BVH_D 창)
     for (int i = 5; i <= 8; ++i) {
-        c1->cd(i);
+        c_bvh_d->cd(i - 4); // Pad 번호는 1, 2, 3, 4가 되어야 함
         hist_map[i]->Draw("COLZ");
         draw_bvh_d_overlay();
     }
     
-    // BH2 그리기
-    c1->cd(9);
+    // BH2 그리기 (기타 검출기 창)
+    c_others->cd(1);
     h_bh2->Draw("COLZ");
     {
-        const double segW   = 14.0; const int nSeg = 15; const double cx = 12.0;
-        const double halfW  = 0.5 * segW * nSeg; const double xL = cx - halfW;
-        const double xR     = cx + halfW; const double halfY = 100.0/2.0;
+        const double segW   = 14.0; const int nSeg = 15; const double cx = 38.0;
+        const double halfW  = 0.5 * segW * nSeg; // 105
+        const double xL = cx - halfW; // 12 - 105 = -93
+        const double xR = cx + halfW; // 12 + 105 = +117
+        const double halfY = 100.0/2.0;
         TBox *box_bh2 = new TBox(xL, -halfY, xR, halfY);
         box_bh2->SetFillStyle(0); box_bh2->SetLineColor(kRed); box_bh2->SetLineWidth(2);
         box_bh2->Draw("SAME");
@@ -139,16 +143,17 @@ void view_detectors() {
         }
         TLine *Lc = new TLine(cx, -halfY, cx, halfY);
         Lc->SetLineColor(kRed); Lc->SetLineStyle(2); Lc->Draw("SAME");
-        TLatex *labL = new TLatex(xL, halfY+6, "-91");
-        TLatex *labR = new TLatex(xR, halfY+6, "+63");
+        
+       TLatex *labL = new TLatex(xL, halfY+6, Form("%.0f", xL)); // 라벨 자동 업데이트
+       TLatex *labR = new TLatex(xR, halfY+6, Form("%.0f", xR)); // 라벨 자동 업데이트
         labL->SetTextAlign(23); labR->SetTextAlign(23);
         labL->SetTextColor(kRed); labR->SetTextColor(kRed);
         labL->SetTextSize(0.03); labR->SetTextSize(0.03);
         labL->Draw("SAME"); labR->Draw("SAME");
     }
 
-    // T0 그리기
-    c1->cd(10);
+    // T0 그리기 (기타 검출기 창)
+    c_others->cd(2);
     h_t0->Draw("COLZ");
     {
         double x_t0[4], y_t0[4], angle=45.0*TMath::Pi()/180.0, w=80, h=80;
