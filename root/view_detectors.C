@@ -37,7 +37,7 @@ void draw_bvh_u_overlay() {
 
 // BVH_D (VP5, 6, 7, 8) 오버레이 그리기 함수
 void draw_bvh_d_overlay() {
-    double seg_w = 10.0, seg_h = 140.0; int n_segs = 70;
+    double seg_w = 10.0, seg_h = 140.0; int n_segs = 100;
     double total_w = n_segs * seg_w, start_x = -total_w / 2.0;
     int center_idx = n_segs / 2;
     for (int i = 0; i < n_segs; ++i) {
