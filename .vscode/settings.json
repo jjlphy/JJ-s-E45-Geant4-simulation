@@ -76,6 +76,8 @@
         "view_detectors_confirm.C": "cpp",
         "gen.dict.C": "cpp",
         "correlation.C": "cpp",
-        "check_segments.C": "cpp"
+        "check_segments.C": "cpp",
+        "view_detectors_BVH.C": "cpp",
+        "hitpattern.C": "cpp"
     }
 }
