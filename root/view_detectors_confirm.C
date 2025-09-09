@@ -1,5 +1,3 @@
-// view_detectors_final_with_all_labels_v4.C
-
 #include "TFile.h"
 #include "TTree.h"
 #include "TH2.h"
@@ -13,10 +11,13 @@
 //--- 오버레이 그리기 함수 (코드를 깔끔하게 하기 위해 분리) ---
 
 // BVH_U (VP1, 2, 3, 4) 오버레이 그리기 함수
-void draw_bvh_u_overlay() {
-    double seg_w = 10.0, seg_h = 140.0; int n_segs = 40;
-    double total_w = n_segs * seg_w, start_x = -total_w / 2.0;
+// [수정] center_x 인자를 추가하여 오버레이 중심 위치를 조절
+void draw_bvh_u_overlay(double center_x) {
+    double seg_w = 10.0, seg_h = 140.0; int n_segs = 20;
+    double total_w = n_segs * seg_w;
+    double start_x = center_x - total_w / 2.0; // [수정] 중심 위치 기반으로 시작점 계산
     int center_idx = n_segs / 2;
+
     for (int i = 0; i < n_segs; ++i) {
         double x1 = start_x + i * seg_w;
         TBox *seg = new TBox(x1, -seg_h/2.0, x1 + seg_w, seg_h/2.0);
@@ -30,15 +31,18 @@ void draw_bvh_u_overlay() {
             label->Draw("SAME");
         }
     }
-    TLatex *label_zero = new TLatex(0, seg_h/2.0 + 10, "0");
+    // [수정] 0번 라벨도 중심 위치로 이동
+    TLatex *label_zero = new TLatex(center_x, seg_h/2.0 + 10, "0");
     label_zero->SetTextAlign(22); label_zero->SetTextColor(kRed); label_zero->SetTextSize(0.03);
     label_zero->Draw("SAME");
 }
 
 // BVH_D (VP5, 6, 7, 8) 오버레이 그리기 함수
-void draw_bvh_d_overlay() {
-    double seg_w = 10.0, seg_h = 140.0; int n_segs = 180;
-    double total_w = n_segs * seg_w, start_x = -total_w / 2.0;
+// [수정] center_x 인자를 추가하여 오버레이 중심 위치를 조절
+void draw_bvh_d_overlay(double center_x) {
+    double seg_w = 10.0, seg_h = 140.0; int n_segs = 40;
+    double total_w = n_segs * seg_w;
+    double start_x = center_x - total_w / 2.0; // [수정] 중심 위치 기반으로 시작점 계산
     int center_idx = n_segs / 2;
     for (int i = 0; i < n_segs; ++i) {
         double x1 = start_x + i * seg_w;
@@ -52,14 +56,21 @@ void draw_bvh_d_overlay() {
             label->Draw("SAME");
         }
     }
-    TLatex *label_zero = new TLatex(0, seg_h/2.0 + 15, "0");
+    // [수정] 0번 라벨도 중심 위치로 이동
+    TLatex *label_zero = new TLatex(center_x, seg_h/2.0 + 15, "0");
     label_zero->SetTextAlign(22); label_zero->SetTextColor(kRed); label_zero->SetTextSize(0.03);
     label_zero->Draw("SAME");
 }
 
 
 // --- 메인 함수 ---
-void view_detectors() {
+void view_detectors_confirm() {
+    // --- [수정] 오버레이 중심 X좌표 설정 ---
+    // 이 부분의 숫자만 바꾸면 오버레이 전체가 이동합니다.
+    double bvh_u_center_x = 30.0;  // mm (VP2 Mean X 값 기준)
+    double bvh_d_center_x = 400.0; // mm (VP6 Mean X 값 기준)
+    // ------------------------------------
+
     // 0) 파일/트리 열기
     TFile *f = new TFile("E45_newprofile11_980.root");
     if (!f || f->IsZombie()) { return; }
@@ -114,14 +125,14 @@ void view_detectors() {
     for (int i = 1; i <= 4; ++i) {
         c_bvh_u->cd(i);
         hist_map[i]->Draw("COLZ");
-        draw_bvh_u_overlay();
+        draw_bvh_u_overlay(bvh_u_center_x); // [수정] 중심 X좌표 전달
     }
 
     // VP 5-8 그리기 (BVH_D 창)
     for (int i = 5; i <= 8; ++i) {
-        c_bvh_d->cd(i - 4); // Pad 번호는 1, 2, 3, 4가 되어야 함
+        c_bvh_d->cd(i - 4);
         hist_map[i]->Draw("COLZ");
-        draw_bvh_d_overlay();
+        draw_bvh_d_overlay(bvh_d_center_x); // [수정] 중심 X좌표 전달
     }
     
     // BH2 그리기 (기타 검출기 창)
@@ -129,9 +140,9 @@ void view_detectors() {
     h_bh2->Draw("COLZ");
     {
         const double segW   = 14.0; const int nSeg = 15; const double cx = 35.0;
-        const double halfW  = 0.5 * segW * nSeg; // 105
-        const double xL = cx - halfW; // 12 - 105 = -93
-        const double xR = cx + halfW; // 12 + 105 = +117
+        const double halfW  = 0.5 * segW * nSeg;
+        const double xL = cx - halfW;
+        const double xR = cx + halfW;
         const double halfY = 100.0/2.0;
         TBox *box_bh2 = new TBox(xL, -halfY, xR, halfY);
         box_bh2->SetFillStyle(0); box_bh2->SetLineColor(kRed); box_bh2->SetLineWidth(2);
@@ -144,8 +155,8 @@ void view_detectors() {
         TLine *Lc = new TLine(cx, -halfY, cx, halfY);
         Lc->SetLineColor(kRed); Lc->SetLineStyle(2); Lc->Draw("SAME");
         
-       TLatex *labL = new TLatex(xL, halfY+6, Form("%.0f", xL)); // 라벨 자동 업데이트
-       TLatex *labR = new TLatex(xR, halfY+6, Form("%.0f", xR)); // 라벨 자동 업데이트
+       TLatex *labL = new TLatex(xL, halfY+6, Form("%.0f", xL));
+       TLatex *labR = new TLatex(xR, halfY+6, Form("%.0f", xR));
         labL->SetTextAlign(23); labR->SetTextAlign(23);
         labL->SetTextColor(kRed); labR->SetTextColor(kRed);
         labL->SetTextSize(0.03); labR->SetTextSize(0.03);

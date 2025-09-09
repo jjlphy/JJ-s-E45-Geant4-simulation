@@ -3758,14 +3758,20 @@ PrimaryGeneratorAction::GenerateE72PionMinusFromBeamFile(G4Event* anEvent)
 }
 
 //_____________________________________________________________________________
-// 7218 : pi- p -> pi+ pi- n  (flat 3-body phase space)
+//_____________________________________________________________________________
+
+// 7218 : pi- p -> pi+ pi- n  (flat 3-body phase space) [최종 수정 버전 2]
+// [수정 내용]
+// - 1개의 이벤트 안에서 입사빔과 최종입자를 모두 생성하여 분석을 용이하게 함.
+// - 입사빔은 빔 파일의 정보를 따라 BH2, BVH_U를 통과.
+// - 최종입자는 타겟 위치에서 2pi N 반응으로 생성.
 void PrimaryGeneratorAction::GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEvent)
 {
   // -- masses (GeV)
-  const double mPip = m_PionPlus ->GetPDGMass()/GeV; // ~= 0.13957
-  const double mPim = m_PionMinus->GetPDGMass()/GeV; // ~= 0.13957
-  const double mN   = m_Neutron   ->GetPDGMass()/GeV; // ~= 0.93957
-  const double mP   = m_Proton    ->GetPDGMass()/GeV; // for initial target
+  const double mPip = m_PionPlus ->GetPDGMass()/GeV;
+  const double mPim = m_PionMinus->GetPDGMass()/GeV;
+  const double mN   = m_Neutron  ->GetPDGMass()/GeV;
+  const double mP   = m_Proton   ->GetPDGMass()/GeV;
 
   // -- beam 3-momentum from BeamMan (GeV/c)
   TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
@@ -3774,19 +3780,26 @@ void PrimaryGeneratorAction::GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEve
     p_beam.SetXYZ(next.getX(), next.getY(), next.getZ());
   }
 
-  // -- (optional) save beam info in MeV style (E72 관례 유지)
-  G4ThreeVector v3_beam = gAnaMan.GetNextPos();
-  G4LorentzVector vL_beam(v3_beam);
-  G4ThreeVector p3_beam(p_beam.X()*1000, p_beam.Y()*1000, p_beam.Z()*1000); // MeV/c
-  G4LorentzVector pL_beam(p3_beam, std::sqrt(p3_beam.mag2() + std::pow(mPim*1000,2)));
-  gAnaMan.SetBeamInfo(-211, pL_beam, vL_beam); // -211: pi-
+  // ======[ 1. 입사 파이온 빔 생성 (BH2, BVH_U hit 생성용) ]======
+  // 이 입자는 Geant4 시뮬레이션 내에서 실제로 전파되어 검출기에 hit을 남깁니다.
+  G4LorentzVector p_in_g4(m_beam->mom,
+                          std::sqrt(m_beam->mom.mag2() + std::pow(mPim*GeV, 2)));
+  G4LorentzVector v_in_g4(m_beam->pos, 0.0); // 빔 파일에 기록된 시작 위치
+  
+  m_particle_gun->SetParticleDefinition(m_PionMinus);
+  m_particle_gun->SetParticleMomentumDirection(p_in_g4.v());
+  m_particle_gun->SetParticleEnergy(p_in_g4.e() - p_in_g4.m());
+  m_particle_gun->SetParticlePosition(v_in_g4.v());
+  m_particle_gun->GeneratePrimaryVertex(anEvent); // Geant4에 입사빔 생성
+  gAnaMan.SetPrimaryParticle(0, -211, p_in_g4, v_in_g4); // 분석을 위해 0번 입자로 정보 저장
 
-  // -- initial 4-vectors in Lab (GeV)
+
+  // -- initial 4-vectors in Lab (GeV) for reaction kinematics
   TLorentzVector LVpi (p_beam, TMath::Hypot(p_beam.Mag(), mPim));
   TLorentzVector LVpro(0.,0.,0., mP);
   TLorentzVector W = LVpi + LVpro;
 
-  // -- 3-body threshold: pi+ + pi- + n
+  // -- 3-body threshold check
   const double Wabs = W.M();
   const double Wth  = mPip + mPim + mN;
   const G4bool above = (Wabs > Wth);
@@ -3798,40 +3811,42 @@ void PrimaryGeneratorAction::GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEve
   double masses[n_dau] = { mPip, mPim, mN };
   TGenPhaseSpace event;
   event.SetDecay(W, n_dau, masses);
-  event.Generate(); // CSFlat=1이면 그대로; 가중치/모형은 추후 확장
+  event.Generate();
 
-  // -- vertex
-  G4ThreeVector vtx = gAnaMan.GetVertexPos();
+  // -- vertex for final state particles
+  G4ThreeVector vtx = gAnaMan.GetVertexPos(); // 타겟 위치
   G4LorentzVector v(vtx);
 
-  // -- shoot: order = pi+, pi-, n (PDG: +211, -211, 2112)
+  // ======[ 2. 최종 상태 입자 생성 (BVH_D hit 생성용) ]======
+  // 이 입자들은 타겟 위치에서 생성되어 Downstream 검출기로 향합니다.
   struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
     { m_PionPlus ,  +211 },
     { m_PionMinus,  -211 },
     { m_Neutron  ,  2112 }
   };
 
-  for (int i=0;i<n_dau;++i) {
+  for (int i=0; i < n_dau; ++i) {
     const TLorentzVector* d = event.GetDecay(i); // GeV basis
     G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
     m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
     m_particle_gun->SetParticleMomentumDirection(p.v());
     m_particle_gun->SetParticleEnergy(p.e() - p.m());
     m_particle_gun->SetParticlePosition(v.v());
-    m_particle_gun->GeneratePrimaryVertex(anEvent);
-    gAnaMan.SetPrimaryParticle(i, outs[i].pdg, p, v);
-    m_primary_pdg[i] = outs[i].pdg;
+    m_particle_gun->GeneratePrimaryVertex(anEvent); // Geant4에 최종 입자 생성
+
+    gAnaMan.SetPrimaryParticle(i + 1, outs[i].pdg, p, v); // 1,2,3번 입자로 정보 저장
+    m_primary_pdg[i + 1] = outs[i].pdg;
   }
 }
-
 //_____________________________________________________________________________
-// 7219 : pi- p -> pi- pi0 p  (flat 3-body phase space)
+//_____________________________________________________________________________
+// 7219 : pi- p -> pi- pi0 p  (flat 3-body phase space) [최종 수정 버전 2]
 void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent)
 {
   // -- masses (GeV)
-  const double mPim = m_PionMinus->GetPDGMass()/GeV; // ~= 0.13957
-  const double mPi0 = m_PionZero ->GetPDGMass()/GeV; // ~= 0.13498
-  const double mP   = m_Proton   ->GetPDGMass()/GeV; // ~= 0.93827
+  const double mPim = m_PionMinus->GetPDGMass()/GeV;
+  const double mPi0 = m_PionZero ->GetPDGMass()/GeV;
+  const double mP   = m_Proton   ->GetPDGMass()/GeV;
 
   // -- beam 3-momentum (GeV/c)
   TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
@@ -3840,19 +3855,25 @@ void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEve
     p_beam.SetXYZ(next.getX(), next.getY(), next.getZ());
   }
 
-  // -- (optional) save beam info (MeV style)
-  G4ThreeVector v3_beam = gAnaMan.GetNextPos();
-  G4LorentzVector vL_beam(v3_beam);
-  G4ThreeVector p3_beam(p_beam.X()*1000, p_beam.Y()*1000, p_beam.Z()*1000);
-  G4LorentzVector pL_beam(p3_beam, std::sqrt(p3_beam.mag2() + std::pow(mPim*1000,2)));
-  gAnaMan.SetBeamInfo(-211, pL_beam, vL_beam);
+  // ======[ 1. 입사 파이온 빔 생성 (BH2, BVH_U hit 생성용) ]======
+  G4LorentzVector p_in_g4(m_beam->mom,
+                          std::sqrt(m_beam->mom.mag2() + std::pow(mPim*GeV, 2)));
+  G4LorentzVector v_in_g4(m_beam->pos, 0.0);
+  
+  m_particle_gun->SetParticleDefinition(m_PionMinus);
+  m_particle_gun->SetParticleMomentumDirection(p_in_g4.v());
+  m_particle_gun->SetParticleEnergy(p_in_g4.e() - p_in_g4.m());
+  m_particle_gun->SetParticlePosition(v_in_g4.v());
+  m_particle_gun->GeneratePrimaryVertex(anEvent);
+  gAnaMan.SetPrimaryParticle(0, -211, p_in_g4, v_in_g4);
+
 
   // -- initial in Lab
   TLorentzVector LVpi (p_beam, TMath::Hypot(p_beam.Mag(), mPim));
   TLorentzVector LVpro(0.,0.,0., mP);
   TLorentzVector W = LVpi + LVpro;
 
-  // -- 3-body threshold: pi- + pi0 + p
+  // -- 3-body threshold check
   const double Wabs = W.M();
   const double Wth  = mPim + mPi0 + mP;
   const G4bool above = (Wabs > Wth);
@@ -3870,14 +3891,14 @@ void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEve
   G4ThreeVector vtx = gAnaMan.GetVertexPos();
   G4LorentzVector v(vtx);
 
-  // -- shoot: order = pi-, pi0, p (PDG: -211, 111, 2212)
+  // ======[ 2. 최종 상태 입자 생성 (BVH_D hit 생성용) ]======
   struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
     { m_PionMinus,  -211 },
     { m_PionZero ,   111 },
     { m_Proton   ,  2212 }
   };
 
-  for (int i=0;i<n_dau;++i) {
+  for (int i=0; i < n_dau; ++i) {
     const TLorentzVector* d = event.GetDecay(i);
     G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
     m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
@@ -3885,12 +3906,11 @@ void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEve
     m_particle_gun->SetParticleEnergy(p.e() - p.m());
     m_particle_gun->SetParticlePosition(v.v());
     m_particle_gun->GeneratePrimaryVertex(anEvent);
-    gAnaMan.SetPrimaryParticle(i, outs[i].pdg, p, v);
-    m_primary_pdg[i] = outs[i].pdg;
+
+    gAnaMan.SetPrimaryParticle(i + 1, outs[i].pdg, p, v);
+    m_primary_pdg[i + 1] = outs[i].pdg;
   }
 }
-
-
 //_____________________________________________________________________________
 //case 7202
 void
