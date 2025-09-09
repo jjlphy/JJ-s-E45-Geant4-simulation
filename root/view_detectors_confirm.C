@@ -6,24 +6,22 @@
 #include "TLine.h"
 #include "TLatex.h"
 #include "TMath.h"
+#include "TParticle.h"
+#include <vector>
 #include <map>
+#include <iostream>
 
-//--- 오버레이 그리기 함수 (코드를 깔끔하게 하기 위해 분리) ---
-
-// BVH_U (VP1, 2, 3, 4) 오버레이 그리기 함수
-// [수정] center_x 인자를 추가하여 오버레이 중심 위치를 조절
+//--- 오버레이 그리기 함수 (이전과 동일) ---
 void draw_bvh_u_overlay(double center_x) {
-    double seg_w = 10.0, seg_h = 140.0; int n_segs = 20;
+    double seg_w = 10.0, seg_h = 140.0; int n_segs = 26;
     double total_w = n_segs * seg_w;
-    double start_x = center_x - total_w / 2.0; // [수정] 중심 위치 기반으로 시작점 계산
+    double start_x = center_x - total_w / 2.0;
     int center_idx = n_segs / 2;
-
     for (int i = 0; i < n_segs; ++i) {
         double x1 = start_x + i * seg_w;
         TBox *seg = new TBox(x1, -seg_h/2.0, x1 + seg_w, seg_h/2.0);
         seg->SetFillStyle(0); seg->SetLineColor(kRed); seg->SetLineWidth(1);
         seg->Draw("SAME");
-
         int seg_num = (i < center_idx) ? (i - center_idx) : (i - center_idx + 1);
         if (abs(seg_num) == 5 || abs(seg_num) == 10) {
             TLatex *label = new TLatex(x1 + seg_w/2.0, seg_h/2.0 + 10, Form("%+d", seg_num));
@@ -31,18 +29,15 @@ void draw_bvh_u_overlay(double center_x) {
             label->Draw("SAME");
         }
     }
-    // [수정] 0번 라벨도 중심 위치로 이동
     TLatex *label_zero = new TLatex(center_x, seg_h/2.0 + 10, "0");
     label_zero->SetTextAlign(22); label_zero->SetTextColor(kRed); label_zero->SetTextSize(0.03);
     label_zero->Draw("SAME");
 }
 
-// BVH_D (VP5, 6, 7, 8) 오버레이 그리기 함수
-// [수정] center_x 인자를 추가하여 오버레이 중심 위치를 조절
 void draw_bvh_d_overlay(double center_x) {
     double seg_w = 10.0, seg_h = 140.0; int n_segs = 40;
     double total_w = n_segs * seg_w;
-    double start_x = center_x - total_w / 2.0; // [수정] 중심 위치 기반으로 시작점 계산
+    double start_x = center_x - total_w / 2.0;
     int center_idx = n_segs / 2;
     for (int i = 0; i < n_segs; ++i) {
         double x1 = start_x + i * seg_w;
@@ -56,7 +51,6 @@ void draw_bvh_d_overlay(double center_x) {
             label->Draw("SAME");
         }
     }
-    // [수정] 0번 라벨도 중심 위치로 이동
     TLatex *label_zero = new TLatex(center_x, seg_h/2.0 + 15, "0");
     label_zero->SetTextAlign(22); label_zero->SetTextColor(kRed); label_zero->SetTextSize(0.03);
     label_zero->Draw("SAME");
@@ -65,24 +59,108 @@ void draw_bvh_d_overlay(double center_x) {
 
 // --- 메인 함수 ---
 void view_detectors_confirm() {
-    // --- [수정] 오버레이 중심 X좌표 설정 ---
-    // 이 부분의 숫자만 바꾸면 오버레이 전체가 이동합니다.
-    double bvh_u_center_x = 30.0;  // mm (VP2 Mean X 값 기준)
-    double bvh_d_center_x = 400.0; // mm (VP6 Mean X 값 기준)
-    // ------------------------------------
+    double bvh_u_center_x = 30.0;
+    double bvh_d_center_x = 400.0;
 
-    // 0) 파일/트리 열기
-    TFile *f = new TFile("E45_newprofile11_980.root");
+    TFile *f = new TFile("E45_newprofile14_980.root");
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }
 
-    // 1) 히스토그램 생성
+    // VP Z 위치 정보 (계산 및 시각화 모두에 사용)
     std::map<int, double> vp_z_positions = {
         {1, -1000.0}, {2, -900.0}, {3, -800.0}, {4, -760.0},
         {5, 840.0},   {6, 900.0},  {7, 950.0},  {8, 1000.0}
     };
 
+    // ======[ 수정된 부분: 이벤트 수 계산 로직 시작 ]======
+    
+    // 1. 오버레이 경계 정의 (이전과 동일)
+    double bvh_u_n_segs = 26.0;
+    double bvh_u_w = 10.0;
+    double bvh_u_h = 140.0;
+    double bvh_u_x_min = bvh_u_center_x - (bvh_u_n_segs * bvh_u_w) / 2.0;
+    double bvh_u_x_max = bvh_u_center_x + (bvh_u_n_segs * bvh_u_w) / 2.0;
+    double bvh_u_y_min = -bvh_u_h / 2.0;
+    double bvh_u_y_max =  bvh_u_h / 2.0;
+
+    double bvh_d_n_segs = 40.0;
+    double bvh_d_w = 10.0;
+    double bvh_d_h = 140.0;
+    double bvh_d_x_min = bvh_d_center_x - (bvh_d_n_segs * bvh_d_w) / 2.0;
+    double bvh_d_x_max = bvh_d_center_x + (bvh_d_n_segs * bvh_d_w) / 2.0;
+    double bvh_d_y_min = -bvh_d_h / 2.0;
+    double bvh_d_y_max =  bvh_d_h / 2.0;
+
+    // 2. TTree 브랜치 설정
+    std::vector<TParticle> *vp_hits = nullptr;
+    tree->SetBranchAddress("VP", &vp_hits);
+
+    // 3. 모든 VP에 대한 Hit 카운터 변수 초기화
+    std::map<int, long long> total_hits;
+    std::map<int, long long> outside_hits;
+    for (int i = 1; i <= 8; ++i) {
+        total_hits[i] = 0;
+        outside_hits[i] = 0;
+    }
+
+    // 4. 전체 이벤트 루프 실행
+    for (Long64_t i = 0; i < tree->GetEntries(); ++i) {
+        tree->GetEntry(i);
+        for (const auto& hit : *vp_hits) {
+            double hitX = hit.Vx();
+            double hitY = hit.Vy();
+            double hitZ = hit.Vz();
+
+            // 모든 VP에 대해 Z 위치를 확인하고 카운트
+            for (auto const& [vp_num, z_pos] : vp_z_positions) {
+                if (TMath::Abs(hitZ - z_pos) < 1.0) {
+                    total_hits[vp_num]++;
+                    
+                    // VP 번호에 따라 적절한 오버레이 경계 적용
+                    if (vp_num <= 4) { // BVH_U 영역 (VP1, 2, 3, 4)
+                        if (hitX < bvh_u_x_min || hitX > bvh_u_x_max || hitY < bvh_u_y_min || hitY > bvh_u_y_max) {
+                            outside_hits[vp_num]++;
+                        }
+                    } else { // BVH_D 영역 (VP5, 6, 7, 8)
+                        if (hitX < bvh_d_x_min || hitX > bvh_d_x_max || hitY < bvh_d_y_min || hitY > bvh_d_y_max) {
+                            outside_hits[vp_num]++;
+                        }
+                    }
+                    break; // 해당 hit에 대한 VP를 찾았으므로 루프 중단
+                }
+            }
+        }
+    }
+
+    // 5. 모든 VP에 대한 결과 출력
+    std::cout << "=====================================================" << std::endl;
+    std::cout << "      Detector Acceptance Analysis Results" << std::endl;
+    std::cout << "=====================================================" << std::endl;
+    
+    std::cout << "--------- BVH_U Region (Upstream) ---------" << std::endl;
+    for (int i = 1; i <= 4; ++i) {
+        double percent_outside = (total_hits[i] > 0) ? (100.0 * outside_hits[i] / total_hits[i]) : 0;
+        printf("[VP%d @ Z=%.1f mm]\n", i, vp_z_positions.at(i));
+        printf(" - Total Hits        : %lld\n", total_hits[i]);
+        printf(" - Hits Outside Overlay: %lld\n", outside_hits[i]);
+        printf(" - Outside Percentage: %.2f %%\n\n", percent_outside);
+    }
+
+    std::cout << "--------- BVH_D Region (Downstream) ---------" << std::endl;
+    for (int i = 5; i <= 8; ++i) {
+        double percent_outside = (total_hits[i] > 0) ? (100.0 * outside_hits[i] / total_hits[i]) : 0;
+        printf("[VP%d @ Z=%.1f mm]\n", i, vp_z_positions.at(i));
+        printf(" - Total Hits        : %lld\n", total_hits[i]);
+        printf(" - Hits Outside Overlay: %lld\n", outside_hits[i]);
+        printf(" - Outside Percentage: %.2f %%\n\n", percent_outside);
+    }
+    std::cout << "=====================================================" << std::endl;
+
+    // ======[ 계산 로직 끝 ]======
+
+
+    // 1) 히스토그램 생성 (기존 코드)
     TH2D *h_vp1 = new TH2D("h_vp1", Form("BVH_U region(VP1, z=%.0f); X [mm]; Y [mm]", vp_z_positions[1]), 200, -300, 300, 200, -200, 200);
     TH2D *h_vp2 = new TH2D("h_vp2", Form("BVH_U region(VP2, z=%.0f); X [mm]; Y [mm]", vp_z_positions[2]), 200, -300, 300, 200, -200, 200);
     TH2D *h_vp3 = new TH2D("h_vp3", Form("BVH_U region(VP3, z=%.0f); X [mm]; Y [mm]", vp_z_positions[3]), 200, -300, 300, 200, -200, 200);
@@ -100,8 +178,8 @@ void view_detectors_confirm() {
         {1, h_vp1}, {2, h_vp2}, {3, h_vp3}, {4, h_vp4},
         {5, h_vp5}, {6, h_vp6}, {7, h_vp7}, {8, h_vp8}
     };
-
-    // 2) 데이터 채우기
+    
+    // ... (이하 시각화 코드는 동일) ...
     for(auto const& [vp_num, z_pos] : vp_z_positions) {
         TString hist_name = Form("h_vp%d", vp_num);
         TString selection = Form("abs(VP.Vz() - (%.1f)) < 1.0", z_pos);
@@ -110,32 +188,25 @@ void view_detectors_confirm() {
     tree->Draw("T0.Vy():T0.Vx() >> h_t0",  "", "goff");
     tree->Draw("BH2.Vy():BH2.Vx() >> h_bh2", "", "goff");
 
-    // 3) 캔버스 생성 및 그리기 (3개의 다른 창으로 분리)
     TCanvas *c_bvh_u = new TCanvas("c_bvh_u", "BVH U Region (VP1-4)", 1200, 1200);
     c_bvh_u->Divide(2, 2);
-
     TCanvas *c_bvh_d = new TCanvas("c_bvh_d", "BVH D Region (VP5-8)", 1200, 1200);
     c_bvh_d->Divide(2, 2);
-
     TCanvas *c_others = new TCanvas("c_others", "Other Detectors", 1200, 600);
     c_others->Divide(2, 1);
 
-
-    // VP 1-4 그리기 (BVH_U 창)
     for (int i = 1; i <= 4; ++i) {
         c_bvh_u->cd(i);
         hist_map[i]->Draw("COLZ");
-        draw_bvh_u_overlay(bvh_u_center_x); // [수정] 중심 X좌표 전달
+        draw_bvh_u_overlay(bvh_u_center_x);
     }
 
-    // VP 5-8 그리기 (BVH_D 창)
     for (int i = 5; i <= 8; ++i) {
         c_bvh_d->cd(i - 4);
         hist_map[i]->Draw("COLZ");
-        draw_bvh_d_overlay(bvh_d_center_x); // [수정] 중심 X좌표 전달
+        draw_bvh_d_overlay(bvh_d_center_x);
     }
     
-    // BH2 그리기 (기타 검출기 창)
     c_others->cd(1);
     h_bh2->Draw("COLZ");
     {
@@ -154,7 +225,6 @@ void view_detectors_confirm() {
         }
         TLine *Lc = new TLine(cx, -halfY, cx, halfY);
         Lc->SetLineColor(kRed); Lc->SetLineStyle(2); Lc->Draw("SAME");
-        
        TLatex *labL = new TLatex(xL, halfY+6, Form("%.0f", xL));
        TLatex *labR = new TLatex(xR, halfY+6, Form("%.0f", xR));
         labL->SetTextAlign(23); labR->SetTextAlign(23);
@@ -163,7 +233,6 @@ void view_detectors_confirm() {
         labL->Draw("SAME"); labR->Draw("SAME");
     }
 
-    // T0 그리기 (기타 검출기 창)
     c_others->cd(2);
     h_t0->Draw("COLZ");
     {
