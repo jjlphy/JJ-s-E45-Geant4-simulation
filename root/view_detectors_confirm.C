@@ -62,7 +62,7 @@ void view_detectors_confirm() {
     double bvh_u_center_x = 30.0;
     double bvh_d_center_x = 400.0;
 
-    TFile *f = new TFile("E45_newprofile14_980.root");
+    TFile *f = new TFile("E45_newprofile15_980.root");
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }

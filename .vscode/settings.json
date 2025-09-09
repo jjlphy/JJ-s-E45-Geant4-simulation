@@ -74,6 +74,7 @@
         "view_detector_final.C": "cpp",
         "view_detectors_final.C": "cpp",
         "view_detectors_confirm.C": "cpp",
-        "gen.dict.C": "cpp"
+        "gen.dict.C": "cpp",
+        "correlation.C": "cpp"
     }
 }
