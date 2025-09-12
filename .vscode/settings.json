@@ -78,6 +78,9 @@
         "correlation.C": "cpp",
         "check_segments.C": "cpp",
         "view_detectors_BVH.C": "cpp",
-        "hitpattern.C": "cpp"
+        "hitpattern.C": "cpp",
+        "correlation_BH2.C": "cpp",
+        "Veto_ratio.C": "cpp",
+        "Veto_sum.C": "cpp"
     }
 }
