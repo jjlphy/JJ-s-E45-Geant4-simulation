@@ -22,13 +22,13 @@ const Int_t DetIdT0     = 13; // T0 추가
 const Int_t NumOfSegBH1  = 11;
 const Int_t NumOfSegBH2  = 15;
 const Int_t NumOfSegBAC  =  1;
-const Int_t NumOfSegHTOF = 40;
+const Int_t NumOfSegHTOF = 32;
 const Int_t NumOfSegKVC  = 8;
 const Int_t NumOfSegFTOF = 24;
 const Int_t NumOfPlaneHTOF = 8;
 const Int_t NumOfSegHTOFOnePlane = NumOfSegHTOF / NumOfPlaneHTOF;
 const Int_t NumOfSegBVH_U  = 22; // BVH up
-const Int_t NumOfSegBVH_D  = 35; // BVH downstream
+const Int_t NumOfSegBVH_D  = 50; // BVH downstream
 const Int_t NumOfSegT0  = 5; // T0
 
 const Int_t DetIdPVAC    =  5;
