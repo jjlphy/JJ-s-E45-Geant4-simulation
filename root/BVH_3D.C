@@ -34,11 +34,14 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include "TInterpreter.h"
+#include "TSystem.h"
+
 
 // -------- Detector Segmentation --------
 static const int N_BH2  = 15; // 0..14
 static const int N_BVHU = 22; // 0..21
-static const int N_BVHD = 32; // 0..31
+static const int N_BVHD = 40; // 0..31
 
 // -------- Helper: unique segment indices passing e-dep cut --------
 static inline void get_unique_hits(const std::vector<TParticle>* v,
@@ -59,12 +62,15 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_BVH4.root",
+void BVH_3D(const char* fname = "E45_segment_40.root",
             double ecutBH2MeV = 0.10,
             double ecutUMeV   = 0.04,
             double ecutDMeV   = 0.04,
             int    event_threshold = 1)
 {
+    gSystem->Load("libPhysics");  // TParticle이 있는 라이브러리
+gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
+
   // 1) Open file and TTree
   TFile* f = TFile::Open(fname, "READ");
   if(!f || f->IsZombie()){ std::cerr << "[Error] Cannot open file: " << fname << std::endl; return; }
@@ -280,6 +286,6 @@ void BVH_3D(const char* fname = "E45_BVH4.root",
 // ================== Convenience wrapper ==================
 void run_analysis() {
   int event_threshold = 1; // (1) change here to highlight bins >=300 counts
-  BVH_3D("E45_BVH4.root", 0.10, 0.04, 0.04, event_threshold);
+  BVH_3D("E45_segment_40.root", 0.10, 0.04, 0.04, event_threshold);
   std::cout << "[Config] Red boxes mark bins with counts >= " << event_threshold << "." << std::endl;
 }
