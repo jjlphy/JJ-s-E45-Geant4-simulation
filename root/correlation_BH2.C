@@ -106,7 +106,7 @@ static std::vector<int> uniqSegsThr(const std::vector<TParticle>* v, int nmax, d
   return std::vector<int>(s.begin(), s.end());
 }
 
-void correlation_BH2(const char* fname="E45_BVH4.root",
+void correlation_BH2(const char* fname="E45_BVH%.root",
                         bool   dedupPerEvent   = true,
                         double htofEdepCut    = 0.0,
                         int    htofMultCut    = 0,

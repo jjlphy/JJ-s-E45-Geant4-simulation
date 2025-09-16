@@ -81,6 +81,10 @@
         "hitpattern.C": "cpp",
         "correlation_BH2.C": "cpp",
         "Veto_ratio.C": "cpp",
-        "Veto_sum.C": "cpp"
+        "Veto_sum.C": "cpp",
+        "Veto_sum_BH2D.C": "cpp",
+        "Veto_sum_noU.C": "cpp",
+        "Veto_efficiency.C": "cpp",
+        "BVH_3D.C": "cpp"
     }
 }

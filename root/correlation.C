@@ -70,7 +70,7 @@ static TH2D* mk2(const char* name,const char* title,
   return h;
 }
 
-void correlation(const char* fname="E45_BVH4.root",
+void correlation(const char* fname="E45_BVH%.root",
                  bool   dedupPerEvent   = true,
                  double htofEdepCut    = 0.2,
                  int    htofMultCut    = 2,
