@@ -86,7 +86,7 @@ void view_detectors_BVH() {
     gStyle->SetPalette(kBird);
 
     // 1. 파일 및 TTree 열기
-    TFile *f = new TFile("E45_BVH2.root"); // 분석할 파일 이름
+    TFile *f = new TFile("E45_segment_40.root"); // 분석할 파일 이름
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }
