@@ -29,7 +29,7 @@ void draw_bvh_u_overlay(double center_x) { // ★ n=22 로 수정
 }
  
 void draw_bvh_d_overlay(double center_x) { // ★ n=40 유지
-  const double seg_w = 10.0, seg_h = 140.0; const int n_segs = 40;
+  const double seg_w = 10.0, seg_h = 140.0; const int n_segs = 50;
   const double total_w = n_segs*seg_w, start_x = center_x - total_w/2.0;
   auto *outline = new TBox(start_x, -seg_h/2., start_x+total_w, seg_h/2.);
   outline->SetFillStyle(0); outline->SetLineColor(kRed); outline->SetLineWidth(2); outline->Draw("SAME");
@@ -44,7 +44,7 @@ void view_detectors_BVH() {
   gStyle->SetOptStat(1111);
   gStyle->SetPalette(kBird);
 
-  TFile *f = TFile::Open("E45_segment_40_420.root","READ");
+  TFile *f = TFile::Open("E45_segment_50_420.root","READ");
   if (!f || f->IsZombie()) { Error("view_detectors_BVH","cannot open file"); return; }
   auto *tree = (TTree*)f->Get("g4hyptpc");
   if (!tree) { Error("view_detectors_BVH","tree g4hyptpc not found"); return; }
@@ -82,6 +82,6 @@ void view_detectors_BVH() {
   c->Divide(3,1);
   c->cd(1); h_hit_bh2->Draw("COLZ");   draw_bh2_overlay(35.0);   // ★ BH2 중심 X = 35
   c->cd(2); h_hit_bvh_u->Draw("COLZ"); draw_bvh_u_overlay(40.0); // ★ BVH_U 중심 X = 40
-  c->cd(3); h_hit_bvh_d->Draw("COLZ"); draw_bvh_d_overlay(420.0);// ★ BVH_D 중심 X = 350
+  c->cd(3); h_hit_bvh_d->Draw("COLZ"); draw_bvh_d_overlay(375.0);// ★ BVH_D 중심 X = 350
   c->SaveAs("hits_with_overlays.png");
 }
