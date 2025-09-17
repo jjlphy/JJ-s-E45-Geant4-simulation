@@ -82,6 +82,6 @@ void view_detectors_BVH() {
   c->Divide(3,1);
   c->cd(1); h_hit_bh2->Draw("COLZ");   draw_bh2_overlay(35.0);   // ★ BH2 중심 X = 35
   c->cd(2); h_hit_bvh_u->Draw("COLZ"); draw_bvh_u_overlay(40.0); // ★ BVH_U 중심 X = 40
-  c->cd(3); h_hit_bvh_d->Draw("COLZ"); draw_bvh_d_overlay(375.0);// ★ BVH_D 중심 X = 350
+  c->cd(3); h_hit_bvh_d->Draw("COLZ"); draw_bvh_d_overlay(420.0);// ★ BVH_D 중심 X = 350
   c->SaveAs("hits_with_overlays.png");
 }
