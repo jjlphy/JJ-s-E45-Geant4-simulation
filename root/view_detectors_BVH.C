@@ -29,7 +29,7 @@ void draw_bvh_u_overlay(double center_x) { // ★ n=22 로 수정
 }
 
 void draw_bvh_d_overlay(double center_x) { // ★ n=40 유지
-  const double seg_w = 10.0, seg_h = 140.0; const int n_segs = 34;
+  const double seg_w = 10.0, seg_h = 140.0; const int n_segs = 36;
   const double total_w = n_segs*seg_w, start_x = center_x - total_w/2.0;
   auto *outline = new TBox(start_x, -seg_h/2., start_x+total_w, seg_h/2.);
   outline->SetFillStyle(0); outline->SetLineColor(kRed); outline->SetLineWidth(2); outline->Draw("SAME");
@@ -44,7 +44,7 @@ void view_detectors_BVH() {
   gStyle->SetOptStat(1111);
   gStyle->SetPalette(kBird);
 
-  TFile *f = TFile::Open("E45_segment_34_375.root","READ");
+  TFile *f = TFile::Open("E45_segment_36_375.root","READ");
   if (!f || f->IsZombie()) { Error("view_detectors_BVH","cannot open file"); return; }
   auto *tree = (TTree*)f->Get("g4hyptpc");
   if (!tree) { Error("view_detectors_BVH","tree g4hyptpc not found"); return; }

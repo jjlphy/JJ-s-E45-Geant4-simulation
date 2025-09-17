@@ -41,7 +41,7 @@
 // -------- Detector Segmentation --------
 static const int N_BH2  = 15; // 0..14
 static const int N_BVHU = 22; // 0..21
-static const int N_BVHD = 34; // 0..31
+static const int N_BVHD = 36; // 0..31
 
 // -------- Helper: unique segment indices passing e-dep cut --------
 static inline void get_unique_hits(const std::vector<TParticle>* v,
@@ -62,7 +62,7 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_segment_34_375.root",
+void BVH_3D(const char* fname = "E45_segment_36_375.root",
             double ecutBH2MeV = 0.10,
             double ecutUMeV   = 0.04,
             double ecutDMeV   = 0.04,
@@ -286,6 +286,6 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
 // ================== Convenience wrapper ==================
 void run_analysis() {
   int event_threshold = 1; // (1) change here to highlight bins >=300 counts
-  BVH_3D("E45_segment_34_375.root", 0.10, 0.04, 0.04, event_threshold);
+  BVH_3D("E45_segment_36_375.root", 0.10, 0.04, 0.04, event_threshold);
   std::cout << "[Config] Red boxes mark bins with counts >= " << event_threshold << "." << std::endl;
 }
