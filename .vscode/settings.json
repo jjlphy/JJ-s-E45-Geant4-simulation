@@ -86,6 +86,8 @@
         "Veto_sum_noU.C": "cpp",
         "Veto_efficiency.C": "cpp",
         "BVH_3D.C": "cpp",
-        "bvh_d_plot1.C": "cpp"
+        "bvh_d_plot1.C": "cpp",
+        "view_detectors_SCH.C": "cpp",
+        "BVH_3D_SCH.C": "cpp"
     }
 }

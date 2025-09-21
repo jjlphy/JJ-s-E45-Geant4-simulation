@@ -1467,40 +1467,38 @@ pos.rotateY(m_rotation_angle);
   t0_lv->SetSensitiveDetector(t0SD);
 }
 //-----------------------------------------------------------------------------
-// Add 25.9.18 SCH 
-
 void DetectorConstruction::ConstructSCH()
 {
   using CLHEP::mm;
 
-  // 절대좌표: Kurama 제거 → SCH만 사용
   const auto& sch_pos  = gGeom.GetGlobalPosition("SCH");
   const auto& sch_size = gSize.GetSize("SchSeg") * 0.5 * mm;
-
   const G4double dXdW  = gGeom.GetWirePitch("SCH") * mm;
+
+  // 1) SD 이름: "/SCH" -> "SCH"
+  auto schSD = new SCHSD("SCH");
+  // 2) 내부 등록: 직접 SDManager 호출(X) -> AddNewDetector(O)
+  AddNewDetector(schSD);
 
   G4LogicalVolume* sch_lv[NumOfSegSCH];
   auto sch_solid = new G4Box("SchSolid", sch_size.x(), sch_size.y(), sch_size.z());
 
   for(G4int i=0; i<NumOfSegSCH; ++i){
-    sch_lv[i] = new G4LogicalVolume(
-        sch_solid, m_material_map["Scintillator"],
-        Form("SchSeg%dLV", i), 0, 0, 0);
+    sch_lv[i] = new G4LogicalVolume(sch_solid, m_material_map["Scintillator"],
+                                    Form("SchSeg%dLV", i), 0, 0, 0);
     sch_lv[i]->SetVisAttributes(G4Colour::Cyan());
 
     const G4double ipos_x = dXdW * (i - (NumOfSegSCH - 1)/2.);
-    // Kurama 회전 제거, 전역 회전행렬만 유지
     G4ThreeVector pos(sch_pos.x() + ipos_x, sch_pos.y(),
                       sch_pos.z() + 1.*mm*(1 - 2*(i%2)));
 
     new G4PVPlacement(m_rotation_matrix, pos, sch_lv[i],
-                      Form("SchSeg%dPV", i), m_world_lv, false, i);
-  }
+                      Form("SchSeg%dPV", i), m_world_lv, false, i, m_check_overlaps);
 
-  auto schSD = new SCHSD("/SCH");
-  G4SDManager::GetSDMpointer()->AddNewDetector(schSD);
-  for(G4int i=0; i<NumOfSegSCH; ++i) sch_lv[i]->SetSensitiveDetector(schSD);
+    sch_lv[i]->SetSensitiveDetector(schSD);
+  }
 }
+
 
 
 //_____________________________________________________________________________
