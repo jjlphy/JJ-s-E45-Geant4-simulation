@@ -22,6 +22,8 @@ KvcRadiator	26	120	10.0
 BvhURadiator    10    140    2.0   # (X x Y x Z) = (10 x 60 x 2) mm^3
 BvhDRadiator    10     250   2.0  # (X x Y x Z) = (2 x 10 x 140) mm^3
 T0Radiator 32 160 10
+SchSeg     200.0   200.0   10.0
+
 
 ### Target
 Target	 	0.0	80.0	100.0

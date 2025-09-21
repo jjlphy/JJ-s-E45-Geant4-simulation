@@ -1189,7 +1189,7 @@ DetectorConstruction::ConstructLAC()
                       "LacMirrorPV", frame_lv, false, 0);
   }
 }
-
+/*
 //_____________________________________________________________________________
 void
 DetectorConstruction::ConstructSCH()
@@ -1220,7 +1220,7 @@ DetectorConstruction::ConstructSCH()
     sch_lv[i]->SetSensitiveDetector(schSD);
   }
 }
-
+*/
 //_____________________________________________________________________________
 void
 DetectorConstruction::ConstructSDC1()

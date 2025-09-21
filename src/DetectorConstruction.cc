@@ -48,6 +48,7 @@
 #include "BVH_U_SD.hh"
 #include "BVH_D_SD.hh"
 #include "T0SD.hh"
+#include "SCHSD.hh"
 
 
 namespace
@@ -116,8 +117,9 @@ DetectorConstruction::Construct()
   ConstructBAC();
   ConstructKVC();
   ConstructBVH_U();
-  ConstructBVH_D();
+  //ConstructBVH_D();
   ConstructT0();
+  ConstructSCH();
 
 #endif
 
@@ -1464,6 +1466,42 @@ pos.rotateY(m_rotation_angle);
   t0_lv->SetVisAttributes(G4Colour::Blue());
   t0_lv->SetSensitiveDetector(t0SD);
 }
+//-----------------------------------------------------------------------------
+// Add 25.9.18 SCH 
+
+void DetectorConstruction::ConstructSCH()
+{
+  using CLHEP::mm;
+
+  // 절대좌표: Kurama 제거 → SCH만 사용
+  const auto& sch_pos  = gGeom.GetGlobalPosition("SCH");
+  const auto& sch_size = gSize.GetSize("SchSeg") * 0.5 * mm;
+
+  const G4double dXdW  = gGeom.GetWirePitch("SCH") * mm;
+
+  G4LogicalVolume* sch_lv[NumOfSegSCH];
+  auto sch_solid = new G4Box("SchSolid", sch_size.x(), sch_size.y(), sch_size.z());
+
+  for(G4int i=0; i<NumOfSegSCH; ++i){
+    sch_lv[i] = new G4LogicalVolume(
+        sch_solid, m_material_map["Scintillator"],
+        Form("SchSeg%dLV", i), 0, 0, 0);
+    sch_lv[i]->SetVisAttributes(G4Colour::Cyan());
+
+    const G4double ipos_x = dXdW * (i - (NumOfSegSCH - 1)/2.);
+    // Kurama 회전 제거, 전역 회전행렬만 유지
+    G4ThreeVector pos(sch_pos.x() + ipos_x, sch_pos.y(),
+                      sch_pos.z() + 1.*mm*(1 - 2*(i%2)));
+
+    new G4PVPlacement(m_rotation_matrix, pos, sch_lv[i],
+                      Form("SchSeg%dPV", i), m_world_lv, false, i);
+  }
+
+  auto schSD = new SCHSD("/SCH");
+  G4SDManager::GetSDMpointer()->AddNewDetector(schSD);
+  for(G4int i=0; i<NumOfSegSCH; ++i) sch_lv[i]->SetSensitiveDetector(schSD);
+}
+
 
 //_____________________________________________________________________________
 void
