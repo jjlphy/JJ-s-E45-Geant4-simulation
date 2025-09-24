@@ -3759,132 +3759,23 @@ PrimaryGeneratorAction::GenerateE72PionMinusFromBeamFile(G4Event* anEvent)
 
 //_____________________________________________________________________________
 //_____________________________________________________________________________
-
-///_____________________________________________________________________________
 //
-// 7218 : [PURE OVERKILL MODE]
-//   - Upstream fake-beam: LH2 center에서 "π+"를 -p̂_beam 방향으로 1발 (BH2/BVH_U만 켜기용)
-//   - Final state: LH2 center에서 π−p → π+ π− n (flat 3-body phase space)
-//   - 실제 beam-through(타겟으로 +z로 들어오는 π−)는 생성하지 않음
+// 7218 : [PURE OVERKILL MODE + target-intersection vertex]
+//   - Upstream fake-beam: LH2 교점에서 "π+"를 -p̂_beam으로 발사 (BH2/BVH_U용)
+//   - Final state: 같은 교점에서 π−p → π+ π− n (flat 3-body phase space)
+//   - 실제 beam-through(π−,+z)는 생성하지 않음
 //
 void PrimaryGeneratorAction::GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEvent)
 {
   using namespace CLHEP;
 
-  // --- particle masses (GeV)
+  // --- masses (GeV)
   const double mPip = m_PionPlus  ->GetPDGMass()/GeV;
   const double mPim = m_PionMinus ->GetPDGMass()/GeV;
   const double mN   = m_Neutron   ->GetPDGMass()/GeV;
   const double mP   = m_Proton    ->GetPDGMass()/GeV;
 
-  // --- beam 3-momentum from BeamMan (GeV/c), keep original phase-space/correlations
-  TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
-  if (gAnaMan.GetDoCombine()) {
-    G4ThreeVector next = gAnaMan.GetNextMom();
-    p_beam.SetXYZ(next.getX(), next.getY(), next.getZ());
-  }
-  const double pmag = p_beam.Mag();                    // GeV/c
-  if(!(pmag>0) || !std::isfinite(pmag)) return;        // 안전장치
-
-  // === [1] Upstream fake-beam (π+, -p̂_beam) @ LH2 center =====================
-  // 로렌츠힘 방향 보존을 위해 v를 뒤집을 때 전하도 뒤집음: π−(+z) ↔ π+(−z)
-  const double E_up_GeV  = std::sqrt(pmag*pmag + mPip*mPip);   // GeV
-  const double KE_up_GeV = E_up_GeV - mPip;                    // GeV
-
-  const G4ThreeVector vtx_LH2 = m_target_pos;                  // LH2 중심 고정
-  const G4ThreeVector nhat_g4 = m_beam->mom.unit();            // G4ThreeVector
-
-  m_particle_gun->SetParticleDefinition(m_PionPlus);           // π+
-  m_particle_gun->SetParticleMomentumDirection((-nhat_g4).unit()); // -p̂_beam
-  m_particle_gun->SetParticleEnergy(KE_up_GeV*GeV);            // KE 단위 주의
-  m_particle_gun->SetParticlePosition(vtx_LH2);
-  m_particle_gun->GeneratePrimaryVertex(anEvent);
-
-  // (선택) 분석 저장: 0번 입자 = upstream fake-beam (π+)
-  {
-    G4LorentzVector p_up_g4((-nhat_g4)*pmag*GeV, E_up_GeV*GeV);
-    G4LorentzVector v_up_g4(vtx_LH2, 0.0);
-    gAnaMan.SetPrimaryParticle(0, +211, p_up_g4, v_up_g4);
-    if(1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0])))
-      m_primary_pdg[0] = +211;
-  }
-
-  // === [2] Reaction in Lab: π−(p_beam) + p(at rest)  ==========================
-  // 주의: 반응계 W는 원래 실험의 π−(+z)와 정지 p를 가정하여 구성 (phase space 샘플용)
-  TLorentzVector LVpi (p_beam, std::hypot(p_beam.Mag(), mPim)); // GeV
-  TLorentzVector LVpro(0.,0.,0., mP);                           // GeV
-  TLorentzVector W = LVpi + LVpro;
-
-  // --- 3-body threshold check
-  const double Wabs = W.M();
-  const double Wth  = mPip + mPim + mN;
-  const G4bool above = (Wabs > Wth);
-  gAnaMan.SetThresholdCondition(above);
-  if (!above) return; // 문턱 이하면 최종입자 생략 (이벤트: upstream π+만 존재)
-
-  // === [3] Flat 3-body phase space: π+ π− n  =================================
-  static const int n_dau = 3;
-  double masses[n_dau] = { mPip, mPim, mN };
-
-  TGenPhaseSpace event;
-  event.SetDecay(W, n_dau, masses);
-
-  // (옵션) 다운스트림 히트 보장 약간의 bias: 하전입자 중 하나라도 +z로 가게 최대 100번 재샘플
-  int tries = 0;
-  for(;;){
-    event.Generate(); // flat PS
-    bool ok = false;
-    for(int i=0;i<n_dau;i++){
-      const TLorentzVector* d = event.GetDecay(i);
-      // daughter pdg ordering: 0:π+, 1:π−, 2:n  (아래 outs[]와 매칭)
-      if((i==0 || i==1) && d->Pz()>0) { ok=true; break; }
-    }
-    if(ok || ++tries>100) break;
-  }
-
-  // === [4] Spawn final-state at LH2 center ====================================
-  G4LorentzVector v_final(vtx_LH2);
-  struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
-    { m_PionPlus ,  +211 },
-    { m_PionMinus,  -211 },
-    { m_Neutron  ,  2112 }
-  };
-
-  for (int i=0; i<n_dau; ++i) {
-    const TLorentzVector* d = event.GetDecay(i); // GeV
-    G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
-
-    m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
-    m_particle_gun->SetParticleMomentumDirection(p.v());
-    m_particle_gun->SetParticleEnergy(p.e() - p.m());   // KE = E - m
-    m_particle_gun->SetParticlePosition(v_final.v());
-    m_particle_gun->GeneratePrimaryVertex(anEvent);
-
-    gAnaMan.SetPrimaryParticle(i+1, outs[i].pdg, p, v_final);
-    if(i+1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0])))
-      m_primary_pdg[i+1] = outs[i].pdg;
-  }
-}
-
-//_____________________________________________________________________________
-//_____________________________________________________________________________
-//
-// 7219 : [PURE OVERKILL MODE]
-//   - Upstream fake-beam: LH2 center에서 "π+"를 -p̂_beam 방향으로 1발 (BH2/BVH_U만 켜기)
-//   - Final state: LH2 center에서 π−p → π− π0 p (flat 3-body phase space)
-//   - 실제 beam-through(타겟으로 +z로 들어오는 π−)는 생성하지 않음
-//
-void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent)
-{
-  using namespace CLHEP;
-
-  // --- particle masses (GeV)
-  const double mPip = m_PionPlus ->GetPDGMass()/GeV;
-  const double mPim = m_PionMinus->GetPDGMass()/GeV;
-  const double mPi0 = m_PionZero ->GetPDGMass()/GeV;
-  const double mP   = m_Proton   ->GetPDGMass()/GeV;
-
-  // --- beam 3-momentum from BeamMan (GeV/c), keep original correlations
+  // --- beam 3-mom (GeV/c) for reaction kinematics (keep correlations)
   TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
   if (gAnaMan.GetDoCombine()) {
     G4ThreeVector next = gAnaMan.GetNextMom();
@@ -3893,81 +3784,188 @@ void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEve
   const double pmag = p_beam.Mag();
   if(!(pmag>0) || !std::isfinite(pmag)) return;
 
-  // === [1] Upstream fake-beam (π+, -p̂_beam) @ LH2 center =====================
-  // π−(+z)를 대칭 재현하기 위해 v를 뒤집을 때 전하도 뒤집음 → π+(−z)
+  // === compute target-plane intersection vertex (preserve spot & x–x′, y–y′) ===
+  const G4ThreeVector r0   = m_beam->pos;        // start pos from beam file
+  const G4ThreeVector nhat = m_beam->mom.unit(); // dir from beam file
+  const double       z_tgt = m_target_pos.z();
+
+  double t_to_tgt = 0.0;
+  const double nz = nhat.z();
+  if (std::abs(nz) > 1e-9) t_to_tgt = (z_tgt - r0.z())/nz;    // straight-line proj.
+  // if nearly parallel to target plane, just keep original target center offset 0
+  G4ThreeVector vtx_LH2 = r0 + t_to_tgt*nhat;                 // <-- target-plane hit
+
+  // === [1] Upstream fake-beam (π+, -p̂_beam) from target intersection =========
   const double E_up_GeV  = std::sqrt(pmag*pmag + mPip*mPip);
   const double KE_up_GeV = E_up_GeV - mPip;
 
-  const G4ThreeVector vtx_LH2 = m_target_pos;       // LH2 중심 고정
-  const G4ThreeVector nhat_g4 = m_beam->mom.unit(); // G4ThreeVector
-
-  m_particle_gun->SetParticleDefinition(m_PionPlus);         // π+
-  m_particle_gun->SetParticleMomentumDirection((-nhat_g4).unit());
-  m_particle_gun->SetParticleEnergy(KE_up_GeV*GeV);          // KE
-  m_particle_gun->SetParticlePosition(vtx_LH2);
+  const G4ThreeVector nhat_g4 = m_beam->mom.unit();
+  m_particle_gun->SetParticleDefinition(m_PionPlus);                 // π+
+  m_particle_gun->SetParticleMomentumDirection((-nhat_g4).unit());   // go upstream
+  m_particle_gun->SetParticleEnergy(KE_up_GeV*GeV);                  // KE
+  m_particle_gun->SetParticlePosition(vtx_LH2);                      // use intersection
   m_particle_gun->GeneratePrimaryVertex(anEvent);
 
-  // (선택) 분석 저장: 0번 입자 = upstream fake-beam (π+)
+  // store (0) = upstream fake beam
   {
     G4LorentzVector p_up_g4((-nhat_g4)*pmag*GeV, E_up_GeV*GeV);
     G4LorentzVector v_up_g4(vtx_LH2, 0.0);
     gAnaMan.SetPrimaryParticle(0, +211, p_up_g4, v_up_g4);
-    if(1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0])))
-      m_primary_pdg[0] = +211;
+    if(1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0]))) m_primary_pdg[0] = +211;
   }
 
-  // === [2] Reaction in Lab: π−(p_beam) + p(at rest)  ==========================
-  TLorentzVector LVpi (p_beam, std::hypot(p_beam.Mag(), mPim)); // GeV
-  TLorentzVector LVpro(0.,0.,0., mP);                           // GeV
+  // === [2] reaction W in lab (π− + p@rest) ====================================
+  TLorentzVector LVpi (p_beam, std::hypot(p_beam.Mag(), mPim));
+  TLorentzVector LVpro(0.,0.,0., mP);
   TLorentzVector W = LVpi + LVpro;
 
-  // --- 3-body threshold check
+  // threshold
   const double Wabs = W.M();
-  const double Wth  = mPim + mPi0 + mP;
+  const double Wth  = mPip + mPim + mN;
   const G4bool above = (Wabs > Wth);
   gAnaMan.SetThresholdCondition(above);
-  if (!above) return; // 문턱 이하면 최종입자 생략 (이벤트: upstream π+만 존재)
+  if (!above) return;
 
-  // === [3] Flat 3-body phase space: π−, π0, p  ================================
+  // === [3] flat 3-body phase space: π+, π−, n =================================
   static const int n_dau = 3;
-  double masses[n_dau] = { mPim, mPi0, mP }; // daughter order: π−, π0, p
-
+  double masses[n_dau] = { mPip, mPim, mN };
   TGenPhaseSpace event;
   event.SetDecay(W, n_dau, masses);
 
-  // (옵션) 다운스트림 히트 보장: 하전입자(π− 또는 p) 중 하나가 +z 가도록 ≤100회 재샘플
+  // (optional) ensure at least one charged goes to +z to help downstream hits
   int tries = 0;
   for(;;){
-    event.Generate(); // flat PS
-    bool ok = false;
-    // i=0:π−, i=1:π0, i=2: p  (outs[]와 매칭)
-    const TLorentzVector* d0 = event.GetDecay(0);
-    const TLorentzVector* d2 = event.GetDecay(2);
-    if( (d0 && d0->Pz()>0) || (d2 && d2->Pz()>0) ) ok = true;
+    event.Generate();
+    bool ok=false;
+    for(int i=0;i<n_dau;i++){
+      if((i==0 || i==1) && event.GetDecay(i)->Pz()>0){ ok=true; break; }
+    }
     if(ok || ++tries>100) break;
   }
 
-  // === [4] Spawn final-state at LH2 center ====================================
+  // === [4] spawn daughters at the SAME vertex (target intersection) ===========
   G4LorentzVector v_final(vtx_LH2);
   struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
-    { m_PionMinus,  -211 },   // i=0
-    { m_PionZero ,   111 },   // i=1
-    { m_Proton   ,  2212 }    // i=2
+    { m_PionPlus ,  +211 }, { m_PionMinus,  -211 }, { m_Neutron  ,  2112 }
   };
 
   for (int i=0; i<n_dau; ++i) {
-    const TLorentzVector* d = event.GetDecay(i); // GeV
+    const TLorentzVector* d = event.GetDecay(i);
     G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
 
     m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
     m_particle_gun->SetParticleMomentumDirection(p.v());
-    m_particle_gun->SetParticleEnergy(p.e() - p.m()); // KE = E - m
+    m_particle_gun->SetParticleEnergy(p.e() - p.m());
     m_particle_gun->SetParticlePosition(v_final.v());
     m_particle_gun->GeneratePrimaryVertex(anEvent);
 
     gAnaMan.SetPrimaryParticle(i+1, outs[i].pdg, p, v_final);
-    if(i+1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0])))
-      m_primary_pdg[i+1] = outs[i].pdg;
+    if(i+1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0]))) m_primary_pdg[i+1] = outs[i].pdg;
+  }
+}
+
+//_____________________________________________________________________________
+///_____________________________________________________________________________
+//
+// 7219 : [PURE OVERKILL MODE + target-intersection vertex]
+//   - Upstream fake-beam: LH2 교점에서 "π+"를 -p̂_beam으로 발사 (BH2/BVH_U용)
+//   - Final state: 같은 교점에서 π−p → π− π0 p (flat 3-body phase space)
+//   - 실제 beam-through(π−,+z)는 생성하지 않음
+//
+void PrimaryGeneratorAction::GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent)
+{
+  using namespace CLHEP;
+
+  // --- masses (GeV)
+  const double mPip = m_PionPlus ->GetPDGMass()/GeV;
+  const double mPim = m_PionMinus->GetPDGMass()/GeV;
+  const double mPi0 = m_PionZero ->GetPDGMass()/GeV;
+  const double mP   = m_Proton   ->GetPDGMass()/GeV;
+
+  // --- beam 3-mom (GeV/c) for W
+  TVector3 p_beam(m_beam->mom.x()/GeV, m_beam->mom.y()/GeV, m_beam->mom.z()/GeV);
+  if (gAnaMan.GetDoCombine()) {
+    G4ThreeVector next = gAnaMan.GetNextMom();
+    p_beam.SetXYZ(next.getX(), next.getY(), next.getZ());
+  }
+  const double pmag = p_beam.Mag();
+  if(!(pmag>0) || !std::isfinite(pmag)) return;
+
+  // === target-plane intersection vertex =======================================
+  const G4ThreeVector r0   = m_beam->pos;
+  const G4ThreeVector nhat = m_beam->mom.unit();
+  const double       z_tgt = m_target_pos.z();
+
+  double t_to_tgt = 0.0;
+  const double nz = nhat.z();
+  if (std::abs(nz) > 1e-9) t_to_tgt = (z_tgt - r0.z())/nz;
+  G4ThreeVector vtx_LH2 = r0 + t_to_tgt*nhat;
+
+  // === [1] Upstream fake-beam (π+, -p̂_beam) from intersection =================
+  const double E_up_GeV  = std::sqrt(pmag*pmag + mPip*mPip);
+  const double KE_up_GeV = E_up_GeV - mPip;
+
+  const G4ThreeVector nhat_g4 = m_beam->mom.unit();
+  m_particle_gun->SetParticleDefinition(m_PionPlus);
+  m_particle_gun->SetParticleMomentumDirection((-nhat_g4).unit());
+  m_particle_gun->SetParticleEnergy(KE_up_GeV*GeV);
+  m_particle_gun->SetParticlePosition(vtx_LH2);
+  m_particle_gun->GeneratePrimaryVertex(anEvent);
+
+  // store (0)
+  {
+    G4LorentzVector p_up_g4((-nhat_g4)*pmag*GeV, E_up_GeV*GeV);
+    G4LorentzVector v_up_g4(vtx_LH2, 0.0);
+    gAnaMan.SetPrimaryParticle(0, +211, p_up_g4, v_up_g4);
+    if(1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0]))) m_primary_pdg[0] = +211;
+  }
+
+  // === [2] W in lab for π− + p(at rest) =======================================
+  TLorentzVector LVpi (p_beam, std::hypot(p_beam.Mag(), mPim));
+  TLorentzVector LVpro(0.,0.,0., mP);
+  TLorentzVector W = LVpi + LVpro;
+
+  // threshold
+  const double Wabs = W.M();
+  const double Wth  = mPim + mPi0 + mP;
+  const G4bool above = (Wabs > Wth);
+  gAnaMan.SetThresholdCondition(above);
+  if (!above) return;
+
+  // === [3] flat 3-body: π−, π0, p =============================================
+  static const int n_dau = 3;
+  double masses[n_dau] = { mPim, mPi0, mP };
+  TGenPhaseSpace event;
+  event.SetDecay(W, n_dau, masses);
+
+  // (optional) ensure at least one charged (π− or p) goes to +z
+  int tries = 0;
+  for(;;){
+    event.Generate();
+    const TLorentzVector* d0 = event.GetDecay(0); // π−
+    const TLorentzVector* d2 = event.GetDecay(2); // p
+    bool ok = ( (d0 && d0->Pz()>0) || (d2 && d2->Pz()>0) );
+    if(ok || ++tries>100) break;
+  }
+
+  // === [4] spawn daughters at SAME vertex (intersection) =======================
+  G4LorentzVector v_final(vtx_LH2);
+  struct Out { const G4ParticleDefinition* P; int pdg; } outs[n_dau] = {
+    { m_PionMinus,  -211 }, { m_PionZero ,   111 }, { m_Proton   ,  2212 }
+  };
+
+  for (int i=0; i<n_dau; ++i) {
+    const TLorentzVector* d = event.GetDecay(i);
+    G4LorentzVector p(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
+
+    m_particle_gun->SetParticleDefinition(const_cast<G4ParticleDefinition*>(outs[i].P));
+    m_particle_gun->SetParticleMomentumDirection(p.v());
+    m_particle_gun->SetParticleEnergy(p.e() - p.m());
+    m_particle_gun->SetParticlePosition(v_final.v());
+    m_particle_gun->GeneratePrimaryVertex(anEvent);
+
+    gAnaMan.SetPrimaryParticle(i+1, outs[i].pdg, p, v_final);
+    if(i+1 < (int)(sizeof(m_primary_pdg)/sizeof(m_primary_pdg[0]))) m_primary_pdg[i+1] = outs[i].pdg;
   }
 }
 

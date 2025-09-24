@@ -1,21 +1,20 @@
-// BVH_3D_english.C  (final, with English output & veto-rate calculation)
+// BVH_3D_english.C  (denominator = BH2 && BVH_U)
 //
 // - Reads branches:  BH2 (15 seg), BVH_U (22 seg), BVH_D (32 seg)
 // - Energy cuts (MeV): BH2>=ecutBH2MeV, BVH_U>=ecutUMeV, BVH_D>=ecutDMeV
-// - Fills 22x32 2D histograms (U x D) per BH2 segment
-// - Draws dotted 22x32 grid and red boxes where bin content > event_threshold
-// - Computes Veto rates with event-level numerators/denominators:
-//      denom_all: #events with ≥1 BH2 hit (above BH2 threshold)
-//      num_all  : #events that fall in ANY highlighted (U,D) bin for ANY hit BH2 seg
-//      denom_h  : #events with a hit in BH2=h
-//      num_h    : #events that fall in a highlighted (U,D) bin for that specific BH2=h
+// - 1st pass: per-BH2 2D hist (U x D) 채우기  →  D가 실제로 히트한 경우만 U×D 셀 카운트
+// - 마스크(mask[h][u,d])는 event_threshold 초과인 셀만 1로 표기
+// - 2nd pass: **분모는 (BH2 && BVH_U) 이벤트**로 집계, 분자는 (hitsD 및 마스크 매칭)인 이벤트
 //
-// Usage in ROOT:
-//     .L BVH_3D_english.C+
-//     run_analysis();                   // default
-//     // or tweak thresholds:
-//     BVH_3D("E45_BVH4.root", 0.10, 0.04, 0.04, 300);
+// Summary 출력:
+//   - Total events (TTree entries)
+//   - BH2-only events (BH2 && !BVH_U)
+//   - BH2 && BVH_U events  [= veto rate의 전역 분모]
+//   - (참고) BH2 && BVH_U && BVH_D events
 //
+// 사용법:
+//   .L BVH_3D_english.C+
+//   run_analysis();  // 또는 BVH_3D("파일.root", 0.10, 0.04, 0.04, 1);
 
 #include "Rtypes.h"
 #include "TFile.h"
@@ -29,29 +28,26 @@
 #include "TString.h"
 #include "TPad.h"
 #include "TROOT.h"
+#include "TInterpreter.h"
+#include "TSystem.h"
 #include <vector>
 #include <unordered_set>
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
-#include "TInterpreter.h"
-#include "TSystem.h"
 
-
-// -------- Detector Segmentation --------
 static const int N_BH2  = 15; // 0..14
-static const int N_BVHU = 22; // 0..21
+static const int N_BVHU = 15; // 0..21
 static const int N_BVHD = 32; // 0..31
 
-// -------- Helper: unique segment indices passing e-dep cut --------
+// 고유 세그먼트 집합 뽑기 (가중치=Edep[MeV]가 cut 이상인 것만)
 static inline void get_unique_hits(const std::vector<TParticle>* v,
                                    int nmax, double cutMeV,
                                    std::vector<int>& out)
 {
   out.clear();
   if(!v) return;
-  std::unordered_set<int> s;
-  s.reserve(8);
+  std::unordered_set<int> s; s.reserve(8);
   for(const auto& p : *v){
     if(p.GetWeight() <= cutMeV) continue;
     int id = p.GetMother(1);
@@ -61,17 +57,16 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
   std::sort(out.begin(), out.end());
 }
 
-// ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_segment_32_420_250mm.root",
+void BVH_3D(const char* fname = "E45_BVH1_60mm.root",
             double ecutBH2MeV = 0.10,
             double ecutUMeV   = 0.04,
             double ecutDMeV   = 0.04,
             int    event_threshold = 1)
 {
-    gSystem->Load("libPhysics");  // TParticle이 있는 라이브러리
-gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
+  gSystem->Load("libPhysics");
+  gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
 
-  // 1) Open file and TTree
+  // 1) 파일/트리
   TFile* f = TFile::Open(fname, "READ");
   if(!f || f->IsZombie()){ std::cerr << "[Error] Cannot open file: " << fname << std::endl; return; }
   TTree* tr = (TTree*)f->Get("g4hyptpc");
@@ -80,9 +75,9 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
   std::vector<TParticle> *BH2=nullptr, *BVHU=nullptr, *BVHD=nullptr;
   tr->SetBranchAddress("BH2",   &BH2);
   tr->SetBranchAddress("BVH_U", &BVHU);
-  tr->SetBranchAddress("BVH_D", &BVHD); // fixed typo: "BVH_D"
+  tr->SetBranchAddress("BVH_D", &BVHD);
 
-  // 2) Create histograms (one per BH2 segment)
+  // 2) BH2별 U×D 히스토그램
   std::vector<TH2F*> h_bvh_ud(N_BH2);
   for (int h = 0; h < N_BH2; ++h) {
     TString h_name  = TString::Format("h_bvh_ud_bh2_%d", h);
@@ -92,12 +87,17 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
                            N_BVHD, -0.5, N_BVHD-0.5);
   }
 
-  // 3) First pass: fill histograms
+  // 3) 1st pass: U×D 빈도 채우기 (D 히트 존재할 때만)
   const Long64_t N = tr->GetEntries();
   std::vector<int> hitsH, hitsU, hitsD;
   hitsH.reserve(8); hitsU.reserve(8); hitsD.reserve(8);
 
-  std::cout << "[Info] Processing " << N << " events..." << std::endl;
+  // 통계 집계용 카운터
+  Long64_t cnt_BH2_only        = 0; // BH2 && !U
+  Long64_t cnt_BH2_and_U       = 0; // BH2 && U   (veto rate 전역 분모)
+  Long64_t cnt_BH2_U_and_D     = 0; // BH2 && U && D (참고)
+
+  std::cout << "[Info] 1st pass: filling U×D per BH2, also counting categories..." << std::endl;
   for(Long64_t i = 0; i < N; ++i){
     if(i && (i % 100000 == 0)) std::cout << "  " << i << " / " << N << "\r" << std::flush;
     tr->GetEntry(i);
@@ -106,7 +106,16 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
     get_unique_hits(BVHU, N_BVHU, ecutUMeV,   hitsU);
     get_unique_hits(BVHD, N_BVHD, ecutDMeV,   hitsD);
 
-    if (hitsH.empty() || hitsU.empty() || hitsD.empty()) continue;
+    const bool hasH = !hitsH.empty();
+    const bool hasU = !hitsU.empty();
+    const bool hasD = !hitsD.empty();
+
+    if(hasH && !hasU) cnt_BH2_only++;
+    if(hasH &&  hasU) cnt_BH2_and_U++;
+    if(hasH &&  hasU && hasD) cnt_BH2_U_and_D++;
+
+    // U×D 2D 빈도는 실제 D가 있을 때만 채운다 (매트릭스는 U와 D의 동시 상관)
+    if(!(hasH && hasU && hasD)) continue;
 
     for (int h : hitsH) {
       TH2F* H = h_bvh_ud[h];
@@ -117,26 +126,25 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
       }
     }
   }
-  std::cout << "\n[Info] Filling finished." << std::endl;
+  std::cout << "\n[Info] 1st pass finished." << std::endl;
 
-  // 4) Build highlighted masks for bins above threshold (per BH2)
-  //    mask[h][u*N_BVHD + d] == true if that bin is highlighted
+  // 4) 마스크 구축(빈도 > event_threshold)
   std::vector< std::vector<char> > mask(N_BH2, std::vector<char>(N_BVHU * N_BVHD, 0));
   for(int h=0; h<N_BH2; ++h){
     TH2F* H = h_bvh_ud[h];
     for(int bx=1; bx<=H->GetNbinsX(); ++bx){
       for(int by=1; by<=H->GetNbinsY(); ++by){
         double c = H->GetBinContent(bx,by);
-        if(c > event_threshold){
-          int u = bx-1; // 0..N_BVHU-1
-          int d = by-1; // 0..N_BVHD-1
+        if(c >= event_threshold){
+          int u = bx-1;
+          int d = by-1;
           mask[h][u*N_BVHD + d] = 1;
         }
       }
     }
   }
 
-  // 5) Second pass: event-level veto counting
+  // 5) 2nd pass: **분모 = BH2 && BVH_U**, 분자 = (마스크 매칭 & D히트 존재)
   Long64_t denom_all = 0, num_all = 0;
   std::vector<Long64_t> denom_h(N_BH2, 0), num_h(N_BH2, 0);
 
@@ -145,7 +153,7 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
   tr->SetBranchAddress("BVH_U", &BVHU);
   tr->SetBranchAddress("BVH_D", &BVHD);
 
-  std::cout << "[Info] Second pass for event-level veto rates..." << std::endl;
+  std::cout << "[Info] 2nd pass: event-level veto counting (denom = BH2 && U)..." << std::endl;
   for(Long64_t i = 0; i < N; ++i){
     if(i && (i % 100000 == 0)) std::cout << "  " << i << " / " << N << "\r" << std::flush;
     tr->GetEntry(i);
@@ -154,17 +162,21 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
     get_unique_hits(BVHU, N_BVHU, ecutUMeV,   hitsU);
     get_unique_hits(BVHD, N_BVHD, ecutDMeV,   hitsD);
 
-    if(hitsH.empty()) continue;
+    const bool hasH = !hitsH.empty();
+    const bool hasU = !hitsU.empty();
+    const bool hasD = !hitsD.empty();
+
+    // 분모: BH2 && U 가 히트한 이벤트만
+    if(!(hasH && hasU)) continue;
     denom_all++;
 
-    // Global flag for "this event falls into any highlighted bin for any BH2 seg it hit"
     bool global_match = false;
 
     for(int h : hitsH){
       bool matched_h = false;
       denom_h[h]++;
 
-      if(!hitsU.empty() && !hitsD.empty()){
+      if(hasD){
         for(int u : hitsU){
           const int base = u * N_BVHD;
           for(int d : hitsD){
@@ -183,12 +195,11 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
 
     if(global_match) num_all++;
   }
-  std::cout << "\n[Info] Event-level counting finished." << std::endl;
+  std::cout << "\n[Info] 2nd pass finished." << std::endl;
 
-  // 6) Draw histograms with 22x32 grid and highlight boxes
+  // 6) 그리기
   gStyle->SetOptStat(0);
   gStyle->SetPalette(kViridis);
-
   TLine* grid_line = new TLine();
   grid_line->SetLineStyle(kDotted);
   grid_line->SetLineColor(kGray+1);
@@ -210,27 +221,24 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
     H->Draw("COLZ");
     gPad->Update();
 
-    const double x_min = H->GetXaxis()->GetXmin(); // -0.5
-    const double x_max = H->GetXaxis()->GetXmax(); // 21.5
-    const double y_min = H->GetYaxis()->GetXmin(); // -0.5
-    const double y_max = H->GetYaxis()->GetXmax(); // 31.5
+    const double x_min = H->GetXaxis()->GetXmin();
+    const double x_max = H->GetXaxis()->GetXmax();
+    const double y_min = H->GetYaxis()->GetXmin();
+    const double y_max = H->GetYaxis()->GetXmax();
 
-    // vertical grid lines (U bins)
     for (int i = 0; i <= N_BVHU; ++i) {
-      const double x_pos = H->GetXaxis()->GetBinLowEdge(i+1); // from -0.5 in steps of 1
+      const double x_pos = H->GetXaxis()->GetBinLowEdge(i+1);
       grid_line->DrawLine(x_pos, y_min, x_pos, y_max);
     }
-    // horizontal grid lines (D bins)
     for (int j = 0; j <= N_BVHD; ++j) {
       const double y_pos = H->GetYaxis()->GetBinLowEdge(j+1);
       grid_line->DrawLine(x_min, y_pos, x_max, y_pos);
     }
 
-    // red boxes for bins > threshold
     for (int bx = 1; bx <= H->GetNbinsX(); ++bx) {
       for (int by = 1; by <= H->GetNbinsY(); ++by) {
         const double count = H->GetBinContent(bx, by);
-        if (count > event_threshold) {
+        if (count >= event_threshold) {
           const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
           const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
           const double y1 = H->GetYaxis()->GetBinLowEdge(by);
@@ -246,22 +254,37 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
     gPad->RedrawAxis();
   }
 
-  // 7) Print summary (English)
-  std::cout << "\n========== Summary ==========\n";
+  std::cout << "\n========== Summary (denominator = BH2 && BVH_U) ==========\n";
   std::cout << std::fixed << std::setprecision(3);
-  std::cout << "Input file                  : " << fname << "\n";
-  std::cout << "BH2 energy cut (MeV)       : " << ecutBH2MeV << "\n";
-  std::cout << "BVH_U energy cut (MeV)     : " << ecutUMeV   << "\n";
-  std::cout << "BVH_D energy cut (MeV)     : " << ecutDMeV   << "\n";
-  std::cout << "Highlight threshold (counts): " << event_threshold << "\n";
-  std::cout << "Events with BH2 hit (denom): " << denom_all << "\n";
+  std::cout << "Input file                        : " << fname << "\n";
+  std::cout << "Total events in TTree             : " << N << "\n";
+
+  auto pct = [&](Long64_t x){ return (N>0) ? (100.0 * (double)x / (double)N) : 0.0; };
+
+  Long64_t cnt_BH2_total = cnt_BH2_only + cnt_BH2_and_U;
+
+  std::cout << "BH2 total events                  : " << cnt_BH2_total
+            << " (" << pct(cnt_BH2_total) << "%)\n";
+  std::cout << "BH2 && BVH_U events   [denom_all] : " << cnt_BH2_and_U
+            << " (" << pct(cnt_BH2_and_U) << "%)\n";
+  std::cout << "BH2 && U && D (for reference)     : " << cnt_BH2_U_and_D
+            << " (" << pct(cnt_BH2_U_and_D) << "%)\n";
+
+  std::cout << "Cuts (MeV):  BH2=" << ecutBH2MeV
+            << "  U=" << ecutUMeV
+            << "  D=" << ecutDMeV
+            << "  | Highlight threshold(counts >=) " << event_threshold << "\n";
+
+  std::cout << "Event-level counts (using denom = BH2&&U):\n";
+  std::cout << "  denom_all = " << denom_all << "\n";
+  std::cout << "  num_all   = " << num_all   << "\n";
   if(denom_all>0){
-    double rate_all = (double)num_all / (double)denom_all;
-    std::cout << "Global veto rate (ANY BH2) : " << num_all << " / " << denom_all
-              << "  = " << rate_all*100.0 << " %\n";
+    double rate_all = (double)num_all / (double)denom_all * 100.0;
+    std::cout << "Global veto rate (ANY BH2): " << num_all << " / " << denom_all
+              << "  = " << rate_all << " %\n";
   }
 
-  std::cout << "\nPer-BH2 segment veto rates:\n";
+  std::cout << "\nPer-BH2 segment veto rates (denom_h = events with BH2=h && U):\n";
   std::cout << "  h :  numerator / denominator  =  rate(%)\n";
   for(int h=0; h<N_BH2; ++h){
     if(denom_h[h]>0){
@@ -275,17 +298,15 @@ gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
                 << "  =      n/a\n";
     }
   }
-  std::cout << "=============================\n";
-  std::cout << "[Info] Analysis & visualization done. " << canvases.size()
-            << " canvas windows were created." << std::endl;
+  std::cout << "===========================================================\n";
+  std::cout << "[Info] Analysis & visualization done. "
+            << canvases.size() << " canvas windows were created.\n";
 
-  // Keep tree/branches alive while canvases are open
   tr->ResetBranchAddresses();
 }
 
-// ================== Convenience wrapper ==================
 void run_analysis() {
-  int event_threshold = 1; // (1) change here to highlight bins >=300 counts
-  BVH_3D("E45_segment_32_420_250mm.root", 0.10, 0.04, 0.04, event_threshold);
-  std::cout << "[Config] Red boxes mark bins with counts >= " << event_threshold << "." << std::endl;
+  int event_threshold = 1; // 빨간 박스 기준 (>= counts)
+  BVH_3D("E45_BVH1_60mm.root", 0.10, 0.04, 0.04, event_threshold);
+  std::cout << "[Config] Red boxes mark bins with counts >= " << event_threshold << ".\n";
 }

@@ -61,7 +61,7 @@ void draw_bvh_d_overlay() {
 // --- 메인 함수 ---
 void view_detectors() {
     // 0) 파일/트리 열기
-    TFile *f = new TFile("E45_newprofile11_980.root");
+    TFile *f = new TFile("../E45_with_2pi.root");
     if (!f || f->IsZombie()) { return; }
     TTree *tree = (TTree*)f->Get("g4hyptpc");
     if (!tree) { return; }
