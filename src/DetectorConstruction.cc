@@ -117,9 +117,9 @@ DetectorConstruction::Construct()
   ConstructBAC();
   ConstructKVC();
   ConstructBVH_U();
-  //ConstructBVH_D();
+  ConstructBVH_D();
   ConstructT0();
-  ConstructSCH();
+  //ConstructSCH();
 
 #endif
 

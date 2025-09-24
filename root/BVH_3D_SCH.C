@@ -1,10 +1,11 @@
-// BVH_3D_with_SCH.C
+// BVH_3D_with_SCH.C  (SCH overlap-aware)
 // - BH2(15), BVH_U(22), SCH(64) 브랜치 사용
 // - 에너지 컷(MeV): BH2>=ecutBH2MeV, BVH_U>=ecutUMeV, SCH>=ecutSCHMeV
 // - BH2 세그먼트별로 (BVH_U x SCH) 22x64 2D 히스토그램 생성
-// - 지정 횟수(event_threshold) 초과 bin에 빨간 박스 표시
-// - 2-pass 방식으로 event-level veto rate 계산(동일 로직 유지)
-// - 브랜치 이름 자동 탐색(과거 파일 호환: "BVH", "/SCH", "SCHHits" 등)
+// - 지정 횟수(event_threshold) 이상(>=) bin에 빨간 박스 표시
+// - 2-pass 방식(event-level)으로 veto rate 계산
+// - 브랜치 이름 자동 탐색(과거 파일 호환)
+// - NEW: SCH 세그 겹침을 고려한 매칭 마스크 SCH-축 팽창(dilation) 옵션
 
 #include "Rtypes.h"
 #include "TFile.h"
@@ -30,6 +31,10 @@
 static const int N_BH2  = 15; // 0..14
 static const int N_BVHU = 22; // 0..21
 static const int N_SCH  = 64; // 0..63
+
+// ====== Matching options ======
+static const bool use_sch_dilation     = true; // SCH 겹침 보정 사용
+static const int  sch_dilate_halfwidth = 1;    // ±1 strip 확장 (겹침≈1.5 mm 가정)
 
 // ===== Helper: branch auto-bind =====
 static bool bind_branch(TTree* tr, const char* preferred,
@@ -67,7 +72,7 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_SCH3.root",
+void BVH_3D(const char* fname = "E45_SCH2.root",
             double ecutBH2MeV   = 0.10,
             double ecutUMeV     = 0.04,
             double ecutSCHMeV   = 0.04,
@@ -126,17 +131,37 @@ void BVH_3D(const char* fname = "E45_SCH3.root",
   }
   std::cout << "\n[Info] Filling finished." << std::endl;
 
-  // 5) Build highlighted masks (counts > threshold)
-  std::vector< std::vector<char> > mask(N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
+  // 5) Build highlighted masks
+  //    base_mask: 원래(카운트 >= threshold) 칸만 1
+  //    mask     : base_mask를 SCH축으로 ±sch_dilate_halfwidth 확장(겹침 보정)
+  std::vector< std::vector<char> > base_mask(N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
+  std::vector< std::vector<char> > mask      (N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
+
   for(int h=0; h<N_BH2; ++h){
     TH2F* H = h_ud[h];
-    for(int bx=1; bx<=H->GetNbinsX(); ++bx)
-      for(int by=1; by<=H->GetNbinsY(); ++by)
-        if(H->GetBinContent(bx,by) > event_threshold)
-          mask[h][(bx-1)*N_SCH + (by-1)] = 1;
+    for(int bx=1; bx<=H->GetNbinsX(); ++bx){
+      for(int by=1; by<=H->GetNbinsY(); ++by){
+        if(H->GetBinContent(bx,by) >= event_threshold){
+          const int u = bx-1;
+          const int s = by-1;
+          base_mask[h][u*N_SCH + s] = 1;
+
+          // --- dilation on SCH axis ---
+          if(use_sch_dilation){
+            const int s_lo = std::max(0, s - sch_dilate_halfwidth);
+            const int s_hi = std::min(N_SCH-1, s + sch_dilate_halfwidth);
+            for(int ss = s_lo; ss <= s_hi; ++ss){
+              mask[h][u*N_SCH + ss] = 1;
+            }
+          }else{
+            mask[h][u*N_SCH + s] = 1;
+          }
+        }
+      }
+    }
   }
 
-  // 6) Second pass: event-level veto counting
+  // 6) Second pass: event-level veto counting (match uses 'mask')
   Long64_t denom_all = 0, num_all = 0;
   std::vector<Long64_t> denom_h(N_BH2, 0), num_h(N_BH2, 0);
 
@@ -177,7 +202,7 @@ void BVH_3D(const char* fname = "E45_SCH3.root",
   }
   std::cout << "\n[Info] Event-level counting finished." << std::endl;
 
-  // 7) Draw histograms + grid + red boxes, and save canvases
+  // 7) Draw histograms + grid + red boxes (red = base_mask bins only)
   gStyle->SetOptStat(0);
   gStyle->SetPalette(kViridis);
 
@@ -214,9 +239,10 @@ void BVH_3D(const char* fname = "E45_SCH3.root",
       grid_line->DrawLine(x_min, y_pos, x_max, y_pos);
     }
 
+    // 빨간 박스: 원래(>=threshold) 칸만 시각화
     for (int bx = 1; bx <= H->GetNbinsX(); ++bx) {
       for (int by = 1; by <= H->GetNbinsY(); ++by) {
-        if (H->GetBinContent(bx, by) > event_threshold) {
+        if (H->GetBinContent(bx, by) >= event_threshold) {
           const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
           const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
           const double y1 = H->GetYaxis()->GetBinLowEdge(by);
@@ -231,7 +257,7 @@ void BVH_3D(const char* fname = "E45_SCH3.root",
     }
     gPad->RedrawAxis();
 
-    // 페이지 저장(편의)
+    // 페이지 저장
     if (h % 3 == 2 || h == N_BH2-1) {
       TString out = TString::Format("bvhu_sch_bh2_%02d_to_%02d.png",
                                     h - (h%3), std::min(h - (h%3) + 2,N_BH2-1));
@@ -246,7 +272,9 @@ void BVH_3D(const char* fname = "E45_SCH3.root",
   std::cout << "BH2 energy cut (MeV)        : " << ecutBH2MeV << "\n";
   std::cout << "BVH_U energy cut (MeV)      : " << ecutUMeV     << "\n";
   std::cout << "SCH energy cut (MeV)        : " << ecutSCHMeV   << "\n";
-  std::cout << "Highlight threshold (counts): " << event_threshold << "\n";
+  std::cout << "Highlight threshold (counts): " << event_threshold << " (>=)\n";
+  std::cout << "SCH dilation                : " << (use_sch_dilation ? "ON" : "OFF")
+            << "  (±" << sch_dilate_halfwidth << ")\n";
   std::cout << "Events with BH2 hit (denom) : " << denom_all << "\n";
   if(denom_all>0){
     double rate_all = (double)num_all / (double)denom_all;
@@ -276,8 +304,10 @@ void BVH_3D(const char* fname = "E45_SCH3.root",
 
 // ================== Convenience wrapper ==================
 void run_analysis() {
-  int event_threshold = 1; // ex) 300 이상에 빨간 박스
-  BVH_3D("E45_SCH3.root", 0.10, 0.04, 0.04, event_threshold);
+  int event_threshold = 1; // 빨간 박스는 카운트가 "1 이상"인 bin
+  BVH_3D("E45_SCH2.root", 0.10, 0.04, 0.04, event_threshold);
   std::cout << "[Config] Red boxes mark bins with counts >= "
-            << event_threshold << "." << std::endl;
+            << event_threshold << ".  (SCH dilation="
+            << (use_sch_dilation ? "ON" : "OFF")
+            << ", ±" << sch_dilate_halfwidth << ")\n";
 }

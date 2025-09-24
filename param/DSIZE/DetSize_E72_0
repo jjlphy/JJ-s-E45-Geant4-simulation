@@ -19,8 +19,8 @@ Bh2Seg		14.0	100.0	5.0
 Bh2SegWidth	14 14 14 14 14 14 14 14 14 14 14 14 14 14 14
 BacRadiator	115	115	12.4
 KvcRadiator	26	120	10.0
-BvhURadiator    10    140    2.0   # (X x Y x Z) = (10 x 60 x 2) mm^3
-BvhDRadiator    10     250   2.0  # (X x Y x Z) = (2 x 10 x 140) mm^3
+BvhURadiator    10    60    2.0   # (X x Y x Z) = (10 x 60 x 2) mm^3
+BvhDRadiator    10     140   2.0  # (X x Y x Z) = (2 x 10 x 140) mm^3
 T0Radiator 32 160 10
 SchSeg     11.5	434.0	2.0
 
