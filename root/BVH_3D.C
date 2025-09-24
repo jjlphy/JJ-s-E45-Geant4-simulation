@@ -38,7 +38,7 @@
 
 static const int N_BH2  = 15; // 0..14
 static const int N_BVHU = 15; // 0..21
-static const int N_BVHD = 32; // 0..31
+static const int N_BVHD = 54; // 0..31
 
 // 고유 세그먼트 집합 뽑기 (가중치=Edep[MeV]가 cut 이상인 것만)
 static inline void get_unique_hits(const std::vector<TParticle>* v,
@@ -57,7 +57,7 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
   std::sort(out.begin(), out.end());
 }
 
-void BVH_3D(const char* fname = "E45_BVH1_60mm.root",
+void BVH_3D(const char* fname = "E45_BVH1_60mm_54.root",
             double ecutBH2MeV = 0.10,
             double ecutUMeV   = 0.04,
             double ecutDMeV   = 0.04,
@@ -307,6 +307,6 @@ void BVH_3D(const char* fname = "E45_BVH1_60mm.root",
 
 void run_analysis() {
   int event_threshold = 1; // 빨간 박스 기준 (>= counts)
-  BVH_3D("E45_BVH1_60mm.root", 0.10, 0.04, 0.04, event_threshold);
+  BVH_3D("E45_BVH1_60mm_54.root", 0.10, 0.04, 0.04, event_threshold);
   std::cout << "[Config] Red boxes mark bins with counts >= " << event_threshold << ".\n";
 }
