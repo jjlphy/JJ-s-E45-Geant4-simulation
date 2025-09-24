@@ -1,17 +1,10 @@
-// BVH_3D_with_SCH.C  (BVH_D -> SCH 버전, 영어 요약 & veto-rate 계산 유지)
-//
-// - Reads branches:  BH2 (15 seg), BVH_U (22 seg), SCH (64 seg)
-// - Energy cuts (MeV): BH2>=ecutBH2MeV, BVH_U>=ecutUMeV, SCH>=ecutSCHMeV
-// - Fills 22x64 2D histograms (U x SCH) per BH2 segment
-// - Draws dotted 22x64 grid and red boxes where bin content > event_threshold
-// - Computes Veto rates with event-level numerators/denominators (동일 로직)
-//
-// Usage in ROOT:
-//     .L BVH_3D_with_SCH.C+
-//     run_analysis();                              // default
-//     // or tweak thresholds:
-//     BVH_3D("E45_segment_32_420_250mm.root", 0.10, 0.04, 0.04, 300);
-//
+// BVH_3D_with_SCH.C
+// - BH2(15), BVH_U(22), SCH(64) 브랜치 사용
+// - 에너지 컷(MeV): BH2>=ecutBH2MeV, BVH_U>=ecutUMeV, SCH>=ecutSCHMeV
+// - BH2 세그먼트별로 (BVH_U x SCH) 22x64 2D 히스토그램 생성
+// - 지정 횟수(event_threshold) 초과 bin에 빨간 박스 표시
+// - 2-pass 방식으로 event-level veto rate 계산(동일 로직 유지)
+// - 브랜치 이름 자동 탐색(과거 파일 호환: "BVH", "/SCH", "SCHHits" 등)
 
 #include "Rtypes.h"
 #include "TFile.h"
@@ -25,20 +18,36 @@
 #include "TString.h"
 #include "TPad.h"
 #include "TROOT.h"
+#include "TInterpreter.h"
+#include "TSystem.h"
 #include <vector>
 #include <unordered_set>
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
-#include "TInterpreter.h"
-#include "TSystem.h"
 
 // -------- Detector Segmentation --------
 static const int N_BH2  = 15; // 0..14
 static const int N_BVHU = 22; // 0..21
-static const int N_SCH  = 64; // 0..63  (BVH_D 대신 SCH 사용)
+static const int N_SCH  = 64; // 0..63
 
-// -------- Helper: unique segment indices passing e-dep cut --------
+// ===== Helper: branch auto-bind =====
+static bool bind_branch(TTree* tr, const char* preferred,
+                        const std::vector<const char*>& fallbacks,
+                        std::vector<TParticle>*& ptr) {
+  if (tr->GetBranch(preferred)) { tr->SetBranchAddress(preferred, &ptr); return true; }
+  for (auto nm : fallbacks) {
+    if (tr->GetBranch(nm)) { tr->SetBranchAddress(nm, &ptr);
+      Warning("BVH_3D","using fallback branch '%s' for '%s'", nm, preferred);
+      return true;
+    }
+  }
+  Error("BVH_3D","branch '%s' not found (no fallback matched)", preferred);
+  return false;
+}
+
+// ===== Helper: unique segment indices passing e-dep cut =====
+//   VHitInfo 포맷 가정: weight=Edep[MeV], mother(1)=segment ID
 static inline void get_unique_hits(const std::vector<TParticle>* v,
                                    int nmax, double cutMeV,
                                    std::vector<int>& out)
@@ -48,22 +57,23 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
   std::unordered_set<int> s;
   s.reserve(8);
   for(const auto& p : *v){
-    if(p.GetWeight() <= cutMeV) continue;
-    int id = p.GetMother(1);
-    if(0<=id && id<nmax) s.insert(id);
+    const double edepMeV = p.GetWeight();
+    if(edepMeV < cutMeV) continue;
+    int seg = p.GetMother(1);
+    if(0<=seg && seg<nmax) s.insert(seg);
   }
   out.assign(s.begin(), s.end());
   std::sort(out.begin(), out.end());
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_SCH.root",
+void BVH_3D(const char* fname = "E45_SCH2.root",
             double ecutBH2MeV   = 0.10,
             double ecutUMeV     = 0.04,
             double ecutSCHMeV   = 0.04,
             int    event_threshold = 1)
 {
-  gSystem->Load("libPhysics");  // TParticle 라이브러리
+  gSystem->Load("libPhysics");
   gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
 
   // 1) Open file and TTree
@@ -73,21 +83,25 @@ void BVH_3D(const char* fname = "E45_SCH.root",
   if(!tr){ std::cerr << "[Error] Cannot find TTree 'g4hyptpc'." << std::endl; f->Close(); return; }
 
   std::vector<TParticle> *BH2=nullptr, *BVHU=nullptr, *SCHv=nullptr;
-  tr->SetBranchAddress("BH2",   &BH2);
-  tr->SetBranchAddress("BVH_U", &BVHU);
-  tr->SetBranchAddress("SCH",   &SCHv); // ★ BVH_D → SCH
 
-  // 2) Create histograms (one per BH2 segment)
+  // 2) Branch binding with fallbacks
+  bool ok = true;
+  ok &= bind_branch(tr, "BH2",   {},                           BH2);
+  ok &= bind_branch(tr, "BVH_U", {"BVH"},                      BVHU);
+  ok &= bind_branch(tr, "SCH",   {"/SCH","SCH1","SCHHits"},    SCHv);
+  if(!ok){ f->Close(); return; }
+
+  // 3) Create histograms (one per BH2 segment)
   std::vector<TH2F*> h_ud(N_BH2);
   for (int h = 0; h < N_BH2; ++h) {
     TString h_name  = TString::Format("h_bvhu_sch_bh2_%d", h);
-    TString h_title = TString::Format("BH2=%d;BVH_U Seg;SCH Seg", h);
+    TString h_title = TString::Format("BH2=%d;BVH_U Segment;SCH Segment", h);
     h_ud[h] = new TH2F(h_name, h_title,
                        N_BVHU, -0.5, N_BVHU-0.5,
                        N_SCH,  -0.5, N_SCH -0.5);
   }
 
-  // 3) First pass: fill histograms
+  // 4) First pass: fill histograms
   const Long64_t N = tr->GetEntries();
   std::vector<int> hitsH, hitsU, hitsS;
   hitsH.reserve(8); hitsU.reserve(8); hitsS.reserve(8);
@@ -105,40 +119,31 @@ void BVH_3D(const char* fname = "E45_SCH.root",
 
     for (int h : hitsH) {
       TH2F* H = h_ud[h];
-      for (int u : hitsU) {
-        for (int s : hitsS) {
+      for (int u : hitsU)
+        for (int s : hitsS)
           H->Fill(u, s);
-        }
-      }
     }
   }
   std::cout << "\n[Info] Filling finished." << std::endl;
 
-  // 4) Build highlighted masks for bins above threshold (per BH2)
-  //    mask[h][u*N_SCH + s] == true if that bin is highlighted
+  // 5) Build highlighted masks (counts > threshold)
   std::vector< std::vector<char> > mask(N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
   for(int h=0; h<N_BH2; ++h){
     TH2F* H = h_ud[h];
-    for(int bx=1; bx<=H->GetNbinsX(); ++bx){
-      for(int by=1; by<=H->GetNbinsY(); ++by){
-        double c = H->GetBinContent(bx,by);
-        if(c > event_threshold){
-          int u = bx-1; // 0..N_BVHU-1
-          int s = by-1; // 0..N_SCH-1
-          mask[h][u*N_SCH + s] = 1;
-        }
-      }
-    }
+    for(int bx=1; bx<=H->GetNbinsX(); ++bx)
+      for(int by=1; by<=H->GetNbinsY(); ++by)
+        if(H->GetBinContent(bx,by) > event_threshold)
+          mask[h][(bx-1)*N_SCH + (by-1)] = 1;
   }
 
-  // 5) Second pass: event-level veto counting
+  // 6) Second pass: event-level veto counting
   Long64_t denom_all = 0, num_all = 0;
   std::vector<Long64_t> denom_h(N_BH2, 0), num_h(N_BH2, 0);
 
   tr->ResetBranchAddresses();
-  tr->SetBranchAddress("BH2",   &BH2);
-  tr->SetBranchAddress("BVH_U", &BVHU);
-  tr->SetBranchAddress("SCH",   &SCHv);
+  bind_branch(tr, "BH2",   {},                        BH2);
+  bind_branch(tr, "BVH_U", {"BVH"},                   BVHU);
+  bind_branch(tr, "SCH",   {"/SCH","SCH1","SCHHits"}, SCHv);
 
   std::cout << "[Info] Second pass for event-level veto rates..." << std::endl;
   for(Long64_t i = 0; i < N; ++i){
@@ -149,11 +154,10 @@ void BVH_3D(const char* fname = "E45_SCH.root",
     get_unique_hits(BVHU, N_BVHU, ecutUMeV,   hitsU);
     get_unique_hits(SCHv, N_SCH,  ecutSCHMeV, hitsS);
 
-    if(hitsH.empty()) continue;
+    if(hitsH.empty()) continue;   // BH2 hit 없으면 분모X
     denom_all++;
 
     bool global_match = false;
-
     for(int h : hitsH){
       bool matched_h = false;
       denom_h[h]++;
@@ -162,24 +166,18 @@ void BVH_3D(const char* fname = "E45_SCH.root",
         for(int u : hitsU){
           const int base = u * N_SCH;
           for(int s : hitsS){
-            if(mask[h][base + s]){
-              matched_h = true;
-              global_match = true;
-              break;
-            }
+            if(mask[h][base + s]) { matched_h = true; global_match = true; break; }
           }
           if(matched_h) break;
         }
       }
-
       if(matched_h) num_h[h]++;
     }
-
     if(global_match) num_all++;
   }
   std::cout << "\n[Info] Event-level counting finished." << std::endl;
 
-  // 6) Draw histograms with 22x64 grid and highlight boxes
+  // 7) Draw histograms + grid + red boxes, and save canvases
   gStyle->SetOptStat(0);
   gStyle->SetPalette(kViridis);
 
@@ -190,41 +188,35 @@ void BVH_3D(const char* fname = "E45_SCH.root",
   std::vector<TCanvas*> canvases;
   for (int h = 0; h < N_BH2; ++h) {
     if (h % 3 == 0) {
-      TString c_name  = TString::Format("c_bh2_%d_to_%d", h, std::min(h+2,N_BH2-1));
+      TString c_name  = TString::Format("c_bh2_%02d_to_%02d", h, std::min(h+2,N_BH2-1));
       TString c_title = TString::Format("BH2 Segments %d to %d", h, std::min(h+2,N_BH2-1));
       TCanvas* c = new TCanvas(c_name, c_title, 1500, 500);
       c->Divide(3, 1);
       canvases.push_back(c);
     }
 
-    canvases.back()->cd((h % 3) + 1);
+    TCanvas* c = canvases.back(); c->cd((h % 3) + 1);
     TH2F* H = h_ud[h];
-    H->GetXaxis()->SetTitle("BVH_U Seg");
-    H->GetYaxis()->SetTitle("SCH Seg");
+    H->GetXaxis()->SetTitle("BVH_U Seg (0–21)");
+    H->GetYaxis()->SetTitle("SCH Seg (0–63)");
     H->Draw("COLZ");
     gPad->Update();
 
-    const double x_min = H->GetXaxis()->GetXmin(); // -0.5
-    const double x_max = H->GetXaxis()->GetXmax(); // 21.5
-    const double y_min = H->GetYaxis()->GetXmin(); // -0.5
-    const double y_max = H->GetYaxis()->GetXmax(); // 63.5
+    const double x_min = H->GetXaxis()->GetXmin(), x_max = H->GetXaxis()->GetXmax();
+    const double y_min = H->GetYaxis()->GetXmin(), y_max = H->GetYaxis()->GetXmax();
 
-    // vertical grid lines (U bins)
     for (int i = 0; i <= N_BVHU; ++i) {
       const double x_pos = H->GetXaxis()->GetBinLowEdge(i+1);
       grid_line->DrawLine(x_pos, y_min, x_pos, y_max);
     }
-    // horizontal grid lines (SCH bins)
     for (int j = 0; j <= N_SCH; ++j) {
       const double y_pos = H->GetYaxis()->GetBinLowEdge(j+1);
       grid_line->DrawLine(x_min, y_pos, x_max, y_pos);
     }
 
-    // red boxes for bins > threshold
     for (int bx = 1; bx <= H->GetNbinsX(); ++bx) {
       for (int by = 1; by <= H->GetNbinsY(); ++by) {
-        const double count = H->GetBinContent(bx, by);
-        if (count > event_threshold) {
+        if (H->GetBinContent(bx, by) > event_threshold) {
           const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
           const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
           const double y1 = H->GetYaxis()->GetBinLowEdge(by);
@@ -238,9 +230,16 @@ void BVH_3D(const char* fname = "E45_SCH.root",
       }
     }
     gPad->RedrawAxis();
+
+    // 페이지 저장(편의)
+    if (h % 3 == 2 || h == N_BH2-1) {
+      TString out = TString::Format("bvhu_sch_bh2_%02d_to_%02d.png",
+                                    h - (h%3), std::min(h - (h%3) + 2,N_BH2-1));
+      canvases.back()->SaveAs(out);
+    }
   }
 
-  // 7) Print summary (English)
+  // 8) Summary
   std::cout << "\n========== Summary ==========\n";
   std::cout << std::fixed << std::setprecision(3);
   std::cout << "Input file                   : " << fname << "\n";
@@ -254,7 +253,6 @@ void BVH_3D(const char* fname = "E45_SCH.root",
     std::cout << "Global veto rate (ANY BH2)  : " << num_all << " / " << denom_all
               << "  = " << rate_all*100.0 << " %\n";
   }
-
   std::cout << "\nPer-BH2 segment veto rates:\n";
   std::cout << "  h :  numerator / denominator  =  rate(%)\n";
   for(int h=0; h<N_BH2; ++h){
@@ -270,16 +268,16 @@ void BVH_3D(const char* fname = "E45_SCH.root",
     }
   }
   std::cout << "=============================\n";
-  std::cout << "[Info] Analysis & visualization done. " << canvases.size()
-            << " canvas windows were created." << std::endl;
+  std::cout << "[Info] Analysis & visualization done. "
+            << canvases.size() << " canvas windows were created." << std::endl;
 
-  // Keep tree/branches alive while canvases are open
   tr->ResetBranchAddresses();
 }
 
 // ================== Convenience wrapper ==================
 void run_analysis() {
-  int event_threshold = 1; // ex) 300 이상에 빨간 박스: event_threshold=300
-  BVH_3D("E45_segment_32_420_250mm.root", 0.10, 0.04, 0.04, event_threshold);
-  std::cout << "[Config] Red boxes mark bins with counts >= " << event_threshold << "." << std::endl;
+  int event_threshold = 1; // ex) 300 이상에 빨간 박스
+  BVH_3D("E45_SCH2.root", 0.10, 0.04, 0.04, event_threshold);
+  std::cout << "[Config] Red boxes mark bins with counts >= "
+            << event_threshold << "." << std::endl;
 }
