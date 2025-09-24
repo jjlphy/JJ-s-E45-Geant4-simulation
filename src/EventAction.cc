@@ -191,6 +191,29 @@ EventAction::EndOfEventAction(const G4Event* anEvent)
   }
 }
 
+//---SCH Hits---
+{
+  auto SDManager = G4SDManager::GetSDMpointer();
+  static int id_sch = -1;
+  if (id_sch < 0) {
+    // 과거/현재 표기 모두 시도 (방어코드)
+    for (auto key : { "SCH/hit", "/SCH/hit", "SCH/SCHHits", "/SCH/SCHHits" }) {
+      int tmp = SDManager->GetCollectionID(key);
+      if (tmp >= 0) { id_sch = tmp; break; }
+    }
+  }
+  if (id_sch >= 0) {
+    auto HC = dynamic_cast<G4THitsCollection<SCHHit>*>(HCTE->GetHC(id_sch));
+    if (HC) {
+      for (G4int i=0, n=HC->entries(); i<n; ++i) {
+        gAnaMan.SetHitData((*HC)[i]);   // VHitInfo 기반이면 바로 동작
+      }
+      gAnaMan.SetNhits("SCH", HC->entries());
+    } else {
+      gAnaMan.SetNhits("SCH", 0);
+    }
+  }
+}
 
   {
     static const auto id = SDManager->GetCollectionID("VP/hit");

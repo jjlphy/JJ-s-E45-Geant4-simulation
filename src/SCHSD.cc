@@ -16,7 +16,7 @@ SCHSD::SCHSD(const G4String& name)
   : G4VSensitiveDetector(name),
     m_hits_collection()
 {
-  collectionName.insert("hit");
+  collectionName.insert("SCHHits");
 }
 
 //_____________________________________________________________________________
