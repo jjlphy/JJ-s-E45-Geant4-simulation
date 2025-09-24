@@ -43,7 +43,7 @@ static void draw_sch_overlay(double center_x, double seg_w=11.5, double seg_h=43
 }
 
 // ---------- main ----------
-void view_detectors_SCH(const char* fname="E45_SCH2.root",
+void view_detectors_SCH(const char* fname="E45_SCH3.root",
                         double schCenterX=420.0,
                         double schSegW=11.5,
                         double schSegH=434.0,   // 액티브 길이로 통일

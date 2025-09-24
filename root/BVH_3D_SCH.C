@@ -67,7 +67,7 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_SCH2.root",
+void BVH_3D(const char* fname = "E45_SCH3.root",
             double ecutBH2MeV   = 0.10,
             double ecutUMeV     = 0.04,
             double ecutSCHMeV   = 0.04,
@@ -277,7 +277,7 @@ void BVH_3D(const char* fname = "E45_SCH2.root",
 // ================== Convenience wrapper ==================
 void run_analysis() {
   int event_threshold = 1; // ex) 300 이상에 빨간 박스
-  BVH_3D("E45_SCH2.root", 0.10, 0.04, 0.04, event_threshold);
+  BVH_3D("E45_SCH3.root", 0.10, 0.04, 0.04, event_threshold);
   std::cout << "[Config] Red boxes mark bins with counts >= "
             << event_threshold << "." << std::endl;
 }
