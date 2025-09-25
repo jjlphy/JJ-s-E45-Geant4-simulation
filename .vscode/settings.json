@@ -91,6 +91,7 @@
         "BVH_3D_SCH.C": "cpp",
         "BVH_3D_total.C": "cpp",
         "BVH_overlay_debug.C": "cpp",
-        "Veto_3D.C": "cpp"
+        "Veto_3D.C": "cpp",
+        "VP_view.C": "cpp"
     }
 }

@@ -1793,7 +1793,7 @@ void DetectorConstruction::ConstructVP()
 
   // 1) 여기서 ‘활성화’할 VP 번호만 골라주세요.
   //    지금은 VP4, VP5, VP6만 생성 (VP1~3 비활성화)
-  const std::vector<int> enabledVP = {1, 2, 3, 4, 5, 6, 7, 8};
+  const std::vector<int> enabledVP = {1, 2, 6, 7, 8};
 
   for (int i : enabledVP) {
     try {
