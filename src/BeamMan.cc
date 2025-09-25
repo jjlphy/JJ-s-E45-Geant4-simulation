@@ -74,14 +74,24 @@ BeamMan::Initialize()
   tree->SetBranchAddress("pIny", &beam.py);
   tree->SetBranchAddress("pInz", &beam.pz);
 
+// === [추가] 빔 위치 오프셋 (conf에서 읽음, 기본값 0) =======================
+const G4double dx = gConf.Get<G4double>("BeamShiftX_mm") * CLHEP::mm;
+const G4double dy = gConf.Get<G4double>("BeamShiftY_mm") * CLHEP::mm;
+const G4double dz = gConf.Get<G4double>("BeamShiftZ_mm") * CLHEP::mm;
+// ===========================================================================
+
+
   for(Long64_t i=0, n=tree->GetEntries(); i<n; ++i){
     tree->GetEntry(i);
     //beam.pos.set(beam.x + x0, beam.y, z0);
      //beam.pos.set(beam.x + x0, beam.y, beam.z);
-     beam.pos.set(beam.x, beam.y, beam.z);
+    beam.pos.set(beam.x, beam.y, beam.z);
     beam.pos *= CLHEP::mm;
+     // 오프셋 적용
+    beam.pos += G4ThreeVector(dx, dy, dz);
+
     G4double scale = p0/0.907;
-    beam.mom.set(beam.px * scale , beam.py * scale, beam.pz * scale);
+    beam.mom.set(beam.px * scale, beam.py * scale, beam.pz * scale);
     m_param_array.push_back(beam);
   }
 

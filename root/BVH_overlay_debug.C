@@ -5,8 +5,7 @@
 //
 // 사용:
 // .L BVH_3D_overlay_merged_out_verbose.C+
-// BVH_3D_overlay_out("E45_BVH1_60mm_54.root","E45_overkill_54.root",
-//                    0.10,0.04,0.04, 1, 1, 1, 30, false);
+// BVH_3D_overlay_out("E45_BVH1_60mm_54.root","E45_overkill_54.root", 0.10,0.04,0.04, 1, 1, 1, 30, false);
 
 #include "Rtypes.h"
 #include "TFile.h"
