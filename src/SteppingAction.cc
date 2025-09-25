@@ -45,7 +45,7 @@
 
 // #define E45_SCENARIO_FORCE_2PI  // ← 이 줄이 있으면 “강제 2π 생성 모드”
 // (주석 처리하면 빔-through 모드)
-#define E45_SCENARIO_FORCE_2PI   // <-- 기본값: 강제 2π 생성
+//#define E45_SCENARIO_FORCE_2PI   // <-- 기본값: 강제 2π 생성
 
 namespace
 {
