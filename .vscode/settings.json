@@ -88,6 +88,8 @@
         "BVH_3D.C": "cpp",
         "bvh_d_plot1.C": "cpp",
         "view_detectors_SCH.C": "cpp",
-        "BVH_3D_SCH.C": "cpp"
+        "BVH_3D_SCH.C": "cpp",
+        "BVH_3D_total.C": "cpp",
+        "BVH_overlay_debug.C": "cpp"
     }
 }

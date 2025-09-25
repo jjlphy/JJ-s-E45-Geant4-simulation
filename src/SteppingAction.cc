@@ -132,6 +132,9 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   G4ThreeVector stepMiddlePosition = (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
   G4ParticleTable* particleTable = G4ParticleTable::GetParticleTable();
 
+  // [added] 태그가 없어도 잡히게: "원빔" 판정자
+  const bool isPrimaryBeam = (theTrack->GetParentID()==0 && particlePdgCode==-211);
+
   // -- cal effective thickness -----
   if (prePVName == "TargetPV") {
     G4int generator = gAnaMan.GetNextGenerator();
@@ -225,15 +228,16 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   }
 #endif
 
-//---------수정 부분 25.9.25--------------
+//=========================== 커스텀 로직 ===========================
+
 // ------------------------------------------------------------------
-// [UPSTREAM_HELPER kill at VP4 plane without geometry]
-//  - SimpleTag("UPSTREAM_HELPER") 가 달린 트랙만 대상
+// [UPSTREAM_HELPER or primary π−] kill at VP4 plane without geometry
+//  - 태그 또는 isPrimaryBeam 대상
 //  - VP4(z=z_vp4) 평면을 통과할 때, 타겟 원기둥 반경 밖이면 StopAndKill
 // ------------------------------------------------------------------
 {
   const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
-  if (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") {
+  if ( (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") || isPrimaryBeam ) {
 
     static const auto& gGeom = DCGeomMan::GetInstance();
     static const auto& gSize = DetSizeMan::GetInstance();
@@ -278,35 +282,14 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     }
   }
 }
-//---------수정 부분 25.9.25--------------
-
-//---------------------- [added] Fail-safe: kill helper at VP5 ----------------------
-// - UPSTREAM_HELPER(=primary pi-)가 VP5 평면을 통과하면 무조건 Kill
-{
-  const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
-  if (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") {
-    static const auto& gGeom = DCGeomMan::GetInstance();
-    static const G4ThreeVector vp5_pos = gGeom.GetGlobalPosition("VP5"); // e.g. (0,0,840) mm
-    const double z_vp5 = vp5_pos.z();
-
-    const double z1 = prePoint->GetPosition().z();
-    const double z2 = postPoint->GetPosition().z();
-
-    // z=z_vp5를 가로지르면 → 원빔 강제 종료 (딸입자는 태그 없으므로 영향 없음)
-    if ( (z1 - z_vp5) * (z2 - z_vp5) <= 0.0 && (z1 != z2) ) {
-      theTrack->SetTrackStatus(fStopAndKill);
-      return;
-    }
-  }
-}
-//-----------------------------------------------------------------------------------
 
 //---------------------- Target first-entry → 3-body spawn ----------------------
-// - UPSTREAM_HELPER(=primary pi-)만 대상
+// (순서) 스폰을 하드가드보다 먼저 실행
+// - 태그 또는 isPrimaryBeam(=primary pi-) 대상
 // - "첫 진입": 재질(LH2) 기준 + 이름 fallback
 {
   const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
-  if (tag && tag->why_ && std::string(tag->why_)=="UPSTREAM_HELPER") {
+  if ( (tag && tag->why_ && std::string(tag->why_)=="UPSTREAM_HELPER") || isPrimaryBeam ) {
     auto postPV = postPoint->GetPhysicalVolume();
     auto prePV  = prePoint->GetPhysicalVolume();
     if (postPV && prePV) {
@@ -346,7 +329,46 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     }
   }
 }
-//---------------------------------------------------------------------------------------
+
+//---------------------- [Hard guard] VP4 downstream 원빔 차단 ------------------
+// (순서) 스폰 이후에 위치. LH2 내부에서는 작동 금지(postMatName!="LH2")
+{
+  if (theTrack->GetParentID()==0 && particlePdgCode==-211) {
+    static const auto& gGeom = DCGeomMan::GetInstance();
+    static const G4ThreeVector vp4_pos = gGeom.GetGlobalPosition("VP4"); // z of target plane
+    const double z_vp4  = vp4_pos.z();
+    const double z_post = postPoint->GetPosition().z();
+
+    const G4Material* postMat = postPoint->GetMaterial();
+    const auto postMatName = postMat ? postMat->GetName() : "";
+
+    if (postMatName!="LH2" && z_post > z_vp4 + 0.5*CLHEP::mm) { // 여유 0.5 mm
+      theTrack->SetTrackStatus(fStopAndKill);
+      return;
+    }
+  }
+}
+
+//---------------------- [Fail-safe] VP5에서 원빔 강제 종료 --------------------
+{
+  const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
+  if ( (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") || isPrimaryBeam ) {
+    static const auto& gGeom = DCGeomMan::GetInstance();
+    static const G4ThreeVector vp5_pos = gGeom.GetGlobalPosition("VP5"); // e.g. (0,0,840) mm
+    const double z_vp5 = vp5_pos.z();
+
+    const double z1 = prePoint->GetPosition().z();
+    const double z2 = postPoint->GetPosition().z();
+
+    // z=z_vp5를 가로지르면 → 원빔 강제 종료 (딸입자는 ParentID>0/태그 없음)
+    if ( (z1 - z_vp5) * (z2 - z_vp5) <= 0.0 && (z1 != z2) ) {
+      theTrack->SetTrackStatus(fStopAndKill);
+      return;
+    }
+  }
+}
+
+//========================= 커스텀 로직 끝 ==========================
 
   if(KillStepInIron){
     auto preMaterial = prePoint->GetMaterial();
