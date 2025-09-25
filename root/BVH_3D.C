@@ -27,8 +27,8 @@
 #include <iomanip>
 
 static const int N_BH2  = 15; // 0..14
-static const int N_BVHU = 15; // 0..14
-static const int N_BVHD = 54; // 0..53
+static const int N_BVHU = 22; // 0..14
+static const int N_BVHD = 32; // 0..53
 
 // ===== 유틸: 컷을 넘는 고유 세그먼트만 추출 =====
 static inline void get_unique_hits(const std::vector<TParticle>* v,
