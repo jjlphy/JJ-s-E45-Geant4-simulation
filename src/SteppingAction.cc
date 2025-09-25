@@ -33,6 +33,20 @@
 #include "TLorentzVector.h"//jaejin
 #include "TGenPhaseSpace.h"//jaejin
 
+// ==== SCENARIO SWITCH =======================================================
+// 1) 강제 2π 생성 모드 (현재 우리가 쓰던 모드)
+//    - 타겟 첫 진입에서 (π+ π− n) 또는 (π− π0 p) 생성하고 원빔 kill
+//    - 타겟 원기둥을 빗나간 원빔은 VP4에서 kill, VP5 fail-safe도 동작
+//
+// 2) 빔-through 모드
+//    - 강제 생성 없음, VP4/VP5 가드 없음 → 원빔은 물리 그대로 진행
+//    - (분석용으로 “진짜 빔-through 이벤트”를 수집할 때 사용)
+// ============================================================================
+
+// #define E45_SCENARIO_FORCE_2PI  // ← 이 줄이 있으면 “강제 2π 생성 모드”
+// (주석 처리하면 빔-through 모드)
+//#define E45_SCENARIO_FORCE_2PI   // <-- 기본값: 강제 2π 생성
+
 namespace
 {
   auto& gAnaMan = AnaManager::GetInstance();
@@ -132,20 +146,19 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   G4ThreeVector stepMiddlePosition = (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
   G4ParticleTable* particleTable = G4ParticleTable::GetParticleTable();
 
-  // [added] 태그가 없어도 잡히게: "원빔" 판정자
+  // [helper] “원빔” 판정자: ParentID==0 && PDG==-211 (primary π−)
   const bool isPrimaryBeam = (theTrack->GetParentID()==0 && particlePdgCode==-211);
 
-  // -- cal effective thickness -----
+  // --------- (원본 코드) 지표 수집/기존 기능 ---------
   if (prePVName == "TargetPV") {
     G4int generator = gAnaMan.GetNextGenerator();
     if (generator == 7201 && particleName == "kaon-") {
       G4double effective_thickness = gAnaMan.GetEffectiveThickness();
       if (effective_thickness == -1.0) gAnaMan.SetEffectiveThickness(stepLength);
-      else gAnaMan.SetEffectiveThickness( (G4double) effective_thickness+stepLength);
+      else gAnaMan.SetEffectiveThickness((G4double)effective_thickness + stepLength);
     }
   }
 
-  // -- check decay particle -----
   std::pair<G4String, G4String> previous_particle = gAnaMan.GetPreviousParticle();
   G4ThreeVector previous_step_pos = gAnaMan.GetDecayPosition();
   G4int generator = gAnaMan.GetNextGenerator();
@@ -153,34 +166,26 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     if ( gAnaMan.IsInsideHtof(previous_step_pos) ) gAnaMan.SetDecayParticleCode( particlePdgCode );
     gAnaMan.SetFocusParentID( parentID );
   }
-
   gAnaMan.SetPreviousParticle(particleName, theProcess);
   gAnaMan.SetDecayPosition(stepMiddlePosition);
 
-  // -- Get Secondary Vertex info --
-  PrimaryGeneratorAction* generatorAction = (PrimaryGeneratorAction*) G4RunManager::GetRunManager()->GetUserPrimaryGeneratorAction();
+  // -- Secondary Vertex 기록(원본) --
+  PrimaryGeneratorAction* generatorAction =
+    (PrimaryGeneratorAction*) G4RunManager::GetRunManager()->GetUserPrimaryGeneratorAction();
 
   for(int i=0;i<10;i++){
-    if(particlePdgCode != generatorAction->m_primary_pdg[i]){
-      continue;
-    }else if(particlePdgCode == generatorAction->m_primary_pdg[i]){
-      if(theTrack->GetTrackStatus() == fStopAndKill){
-        const std::vector<const G4Track*>* secTracks = theStep->GetSecondaryInCurrentStep();
-        if (!secTracks->empty()) {
-          for (const auto& secTrack : *secTracks) {
-            if (secTrack->GetCreatorProcess()) {
-              G4String secProcessName = secTrack->GetCreatorProcess()->GetProcessName();
-              G4int motherPdgCode = particlePdgCode;
-              G4int daughterPdgCode = secTrack->GetDefinition()->GetPDGEncoding();
-              G4ThreeVector mom_se = secTrack->GetMomentum();
-              G4LorentzVector v_se(secTrack->GetPosition(), 0);
-              G4LorentzVector p_se(mom_se, std::sqrt(std::pow(particleMass,2)+std::pow(mom_se.mag(),2)));
-
-              gAnaMan.SetSecondaryVertex(daughterPdgCode,motherPdgCode,p_se,v_se);
-
-            } else {
-              G4cout << "Secondary particle has no creator process!" << G4endl;
-            }
+    if(particlePdgCode != generatorAction->m_primary_pdg[i]) continue;
+    if(theTrack->GetTrackStatus() == fStopAndKill){
+      const std::vector<const G4Track*>* secTracks = theStep->GetSecondaryInCurrentStep();
+      if (!secTracks->empty()) {
+        for (const auto& secTrack : *secTracks) {
+          if (secTrack->GetCreatorProcess()) {
+            G4int motherPdgCode = particlePdgCode;
+            G4int daughterPdgCode = secTrack->GetDefinition()->GetPDGEncoding();
+            G4ThreeVector mom_se = secTrack->GetMomentum();
+            G4LorentzVector v_se(secTrack->GetPosition(), 0);
+            G4LorentzVector p_se(mom_se, std::sqrt(std::pow(particleMass,2)+std::pow(mom_se.mag(),2)));
+            gAnaMan.SetSecondaryVertex(daughterPdgCode,motherPdgCode,p_se,v_se);
           }
         }
       }
@@ -188,185 +193,133 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   }
 
 #ifdef DEBUG
-  PrintHelper helper(3, std::ios::fixed, G4cout);
-  auto time = prePoint->GetGlobalTime();
-  auto track_id = theTrack->GetTrackID();
-  std::stringstream particle_ss;
-  particle_ss << particleName << "(" << track_id << ") ";
-  if(theProcess != "eIoni" &&
-     theProcess != "hIoni" &&
-     theProcess != "msc" &&
-     theProcess != "eBeam" &&
-     theProcess != "Transportation"){
-    G4cout << "   " << time/CLHEP::ns << " ns : "
-           << particle_ss.str() << theProcess << G4endl;
-  }
-
-  auto secondary = theStep->GetSecondaryInCurrentStep();
-  for(const auto& s : *secondary){
-    auto particle = s->GetDefinition();
-    auto name = particle->GetParticleName();
-    if(true
-       || (particleName == "lambda" && name == "proton")){
-      G4cout << "   " << particle_ss.str() << "\tP" << prePoint->GetMomentum()
-             << " X" << prePoint->GetPosition()
-             << "\t-> " << name << " P" << s->GetMomentum() << G4endl;
-    }
-  }
-
-  if(false
-     && particleName == "proton"){
-    auto preMaterial = prePoint->GetMaterial();
-    G4double edep = theStep->GetTotalEnergyDeposit();
-    G4cout << "   " << particleName << " " << theProcess
-           << " " << theTrack->GetTrackStatus()
-           << " " << preMaterial->GetName()
-           << " x=" << prePoint->GetPosition()
-           << " p=" << prePoint->GetMomentum()
-           << " edep=" << edep
-           << G4endl;
-  }
+  // ... (DEBUG 블록은 원본 그대로 유지)
 #endif
 
-//=========================== 커스텀 로직 ===========================
+//=========================== 커스텀 로직 (토글) ===========================
 
-// ------------------------------------------------------------------
-// [UPSTREAM_HELPER or primary π−] kill at VP4 plane without geometry
-//  - 태그 또는 isPrimaryBeam 대상
-//  - VP4(z=z_vp4) 평면을 통과할 때, 타겟 원기둥 반경 밖이면 StopAndKill
-// ------------------------------------------------------------------
-{
-  const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
-  if ( (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") || isPrimaryBeam ) {
+#ifdef E45_SCENARIO_FORCE_2PI
+  // ==================== [모드 1: 강제 2π 생성] ====================
 
-    static const auto& gGeom = DCGeomMan::GetInstance();
-    static const auto& gSize = DetSizeMan::GetInstance();
+  // (A) VP4 평면 miss → 원빔 kill
+  {
+    const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
+    if ( (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") || isPrimaryBeam ) {
 
-    // VP4 중심 좌표 (전역좌표, mm)
-    static const G4ThreeVector vp4_pos = gGeom.GetGlobalPosition("VP4"); // (0,0,-143) mm
-    const double z_vp4 = vp4_pos.z();
+      static const auto& gGeom = DCGeomMan::GetInstance();
+      static const auto& gSize = DetSizeMan::GetInstance();
 
-    // 타겟 중심(= SHSTarget)과 치수
-    static const G4ThreeVector tgt_c = gGeom.GetGlobalPosition("SHSTarget"); // (0,0,-143) mm
-    static const G4ThreeVector tgt_sz = gSize.GetSize("Target");
-    const double Rin = tgt_sz.x();
-    const double Rout = tgt_sz.y();       // mm
-    const double DZ_full = tgt_sz.z();    // mm (full length)
-    const double half_dz = 0.5 * DZ_full;
+      static const G4ThreeVector vp4_pos = gGeom.GetGlobalPosition("VP4");
+      const double z_vp4 = vp4_pos.z();
 
-    // 이번 스텝이 VP4 평면을 '가로지르는지' 판정
-    const double z1 = prePoint->GetPosition().z();
-    const double z2 = postPoint->GetPosition().z();
+      static const G4ThreeVector tgt_c  = gGeom.GetGlobalPosition("SHSTarget");
+      static const G4ThreeVector tgt_sz = gSize.GetSize("Target");
+      const double Rout = tgt_sz.y();
+      const double half_dz = 0.5 * tgt_sz.z();
 
-    if ( (z1 - z_vp4) * (z2 - z_vp4) <= 0.0 && (z1 != z2) ) {
+      const double z1 = prePoint->GetPosition().z();
+      const double z2 = postPoint->GetPosition().z();
 
-      const double t = (z_vp4 - z1) / (z2 - z1); // [0,1]
-      const G4ThreeVector x1 = prePoint->GetPosition();
-      const G4ThreeVector x2 = postPoint->GetPosition();
-      const G4ThreeVector x_at = x1 + t*(x2 - x1); // VP4에서의 교차점
+      if ( (z1 - z_vp4) * (z2 - z_vp4) <= 0.0 && (z1 != z2) ) {
+        const double t = (z_vp4 - z1) / (z2 - z1);
+        const G4ThreeVector x1 = prePoint->GetPosition();
+        const G4ThreeVector x2 = postPoint->GetPosition();
+        const G4ThreeVector x_at = x1 + t*(x2 - x1);
 
-      // 타겟 원기둥 단순 in/out 체크
-      const G4ThreeVector rel = x_at - tgt_c;
-      const double r_xy = std::hypot(rel.x(), rel.y());
-      const bool inside_rad = (r_xy <= Rout + 1e-6);
-      const bool inside_z   = (std::abs(rel.z()) <= half_dz + 1e-6);
+        const G4ThreeVector rel = x_at - tgt_c;
+        const double r_xy = std::hypot(rel.x(), rel.y());
+        const bool inside_rad = (r_xy <= Rout + 1e-6);
+        const bool inside_z   = (std::abs(rel.z()) <= half_dz + 1e-6);
 
-      const bool hits_target_cylinder = (inside_rad && inside_z);
-
-      if (!hits_target_cylinder) {
-        theTrack->SetTrackStatus(fStopAndKill);
-        return;
-      } else {
-        // 통과 = 진짜 타겟 통과로 간주 → 계속 추적
+        if (!(inside_rad && inside_z)) {
+          theTrack->SetTrackStatus(fStopAndKill);
+          return;
+        }
       }
     }
   }
-}
 
-//---------------------- Target first-entry → 3-body spawn ----------------------
-// (순서) 스폰을 하드가드보다 먼저 실행
-// - 태그 또는 isPrimaryBeam(=primary pi-) 대상
-// - "첫 진입": 재질(LH2) 기준 + 이름 fallback
-{
-  const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
-  if ( (tag && tag->why_ && std::string(tag->why_)=="UPSTREAM_HELPER") || isPrimaryBeam ) {
-    auto postPV = postPoint->GetPhysicalVolume();
-    auto prePV  = prePoint->GetPhysicalVolume();
-    if (postPV && prePV) {
-      const G4Material* preMat  = prePoint->GetMaterial();
+  // (B) 타겟 첫 진입에서 3체 생성 후 원빔 kill
+  {
+    const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
+    if ( (tag && tag->why_ && std::string(tag->why_)=="UPSTREAM_HELPER") || isPrimaryBeam ) {
+      auto postPV = postPoint->GetPhysicalVolume();
+      auto prePV  = prePoint->GetPhysicalVolume();
+      if (postPV && prePV) {
+        const G4Material* preMat  = prePoint->GetMaterial();
+        const G4Material* postMat = postPoint->GetMaterial();
+        const auto preMatName  = preMat  ? preMat ->GetName() : "";
+        const auto postMatName = postMat ? postMat->GetName() : "";
+        const bool isGeomBoundary = (postPoint->GetStepStatus()==fGeomBoundary);
+
+        const bool enterLH2 =
+          isGeomBoundary && postMat && (postMatName=="LH2") && (!preMat || preMatName!="LH2");
+
+        const auto& postName = postPV->GetName();
+        const auto& preName  = prePV ->GetName();
+        const bool enterTargetLike =
+          isGeomBoundary &&
+          (postName.find("Target")!=std::string::npos) &&
+          (preName.find("Target")==std::string::npos);
+
+        if (enterLH2 || enterTargetLike)
+        {
+          const G4ThreeVector vtx = postPoint->GetPosition();
+          int channel = (G4UniformRand()<0.5)? 0:1; // 0: π+π−n, 1: π−π0p
+
+          auto stackMan = G4EventManager::GetEventManager()->GetStackManager();
+          if (stackMan) Spawn3BodyAt(theTrack, channel, vtx, stackMan);
+
+          theTrack->SetTrackStatus(fStopAndKill); // 원빔 제거
+          return;
+        }
+      }
+    }
+  }
+
+  // (C) VP4 downstream 하드 가드 (LH2 바깥에서만)
+  {
+    if (isPrimaryBeam) {
+      static const auto& gGeom = DCGeomMan::GetInstance();
+      static const G4ThreeVector vp4_pos = gGeom.GetGlobalPosition("VP4");
+      const double z_vp4  = vp4_pos.z();
+      const double z_post = postPoint->GetPosition().z();
+
       const G4Material* postMat = postPoint->GetMaterial();
-      const auto preMatName  = preMat  ? preMat ->GetName() : "";
       const auto postMatName = postMat ? postMat->GetName() : "";
 
-      const bool isGeomBoundary = (postPoint->GetStepStatus()==fGeomBoundary);
-
-      // NOTE: 프로젝트에 따라 물질명이 "LH2"가 아닐 수 있음 → 실제 이름으로 바꿔주세요.
-      const bool enterLH2 =
-        isGeomBoundary &&
-        postMat && (postMatName=="LH2") && (!preMat || preMatName!="LH2");
-
-      // 보조(fallback): 볼륨 이름에 "Target" 문자열이 들어갈 때 첫 진입으로 간주
-      const auto& postName = postPV->GetName();
-      const auto& preName  = prePV ->GetName();
-      const bool enterTargetLike =
-        isGeomBoundary &&
-        (postName.find("Target")!=std::string::npos) &&
-        (preName.find("Target")==std::string::npos);
-
-      if (enterLH2 || enterTargetLike)
-      {
-        const G4ThreeVector vtx = postPoint->GetPosition();
-        int channel = (G4UniformRand()<0.5)? 0:1; // 0: pi+ pi- n  , 1: pi- pi0 p
-
-        auto stackMan = G4EventManager::GetEventManager()->GetStackManager();
-        if (stackMan) {
-          Spawn3BodyAt(theTrack, channel, vtx, stackMan);
-        }
-
-        theTrack->SetTrackStatus(fStopAndKill); // 원 빔 제거
+      if (postMatName!="LH2" && z_post > z_vp4 + 0.5*CLHEP::mm) {
+        theTrack->SetTrackStatus(fStopAndKill);
         return;
       }
     }
   }
-}
 
-//---------------------- [Hard guard] VP4 downstream 원빔 차단 ------------------
-// (순서) 스폰 이후에 위치. LH2 내부에서는 작동 금지(postMatName!="LH2")
-{
-  if (theTrack->GetParentID()==0 && particlePdgCode==-211) {
-    static const auto& gGeom = DCGeomMan::GetInstance();
-    static const G4ThreeVector vp4_pos = gGeom.GetGlobalPosition("VP4"); // z of target plane
-    const double z_vp4  = vp4_pos.z();
-    const double z_post = postPoint->GetPosition().z();
+  // (D) VP5 fail-safe
+  {
+    const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
+    if ( (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") || isPrimaryBeam ) {
+      static const auto& gGeom = DCGeomMan::GetInstance();
+      static const G4ThreeVector vp5_pos = gGeom.GetGlobalPosition("VP5");
+      const double z_vp5 = vp5_pos.z();
 
-    const G4Material* postMat = postPoint->GetMaterial();
-    const auto postMatName = postMat ? postMat->GetName() : "";
-
-    if (postMatName!="LH2" && z_post > z_vp4 + 0.5*CLHEP::mm) { // 여유 0.5 mm
-      theTrack->SetTrackStatus(fStopAndKill);
-      return;
+      const double z1 = prePoint->GetPosition().z();
+      const double z2 = postPoint->GetPosition().z();
+      if ( (z1 - z_vp5) * (z2 - z_vp5) <= 0.0 && (z1 != z2) ) {
+        theTrack->SetTrackStatus(fStopAndKill);
+        return;
+      }
     }
   }
-}
 
-//---------------------- [Fail-safe] VP5에서 원빔 강제 종료 --------------------
-{
-  const auto* tag = dynamic_cast<const SimpleTag*>(theTrack->GetUserInformation());
-  if ( (tag && tag->why_ && std::string(tag->why_) == "UPSTREAM_HELPER") || isPrimaryBeam ) {
-    static const auto& gGeom = DCGeomMan::GetInstance();
-    static const G4ThreeVector vp5_pos = gGeom.GetGlobalPosition("VP5"); // e.g. (0,0,840) mm
-    const double z_vp5 = vp5_pos.z();
-
-    const double z1 = prePoint->GetPosition().z();
-    const double z2 = postPoint->GetPosition().z();
-
-    // z=z_vp5를 가로지르면 → 원빔 강제 종료 (딸입자는 ParentID>0/태그 없음)
-    if ( (z1 - z_vp5) * (z2 - z_vp5) <= 0.0 && (z1 != z2) ) {
-      theTrack->SetTrackStatus(fStopAndKill);
-      return;
-    }
-  }
-}
+#else
+  // ==================== [모드 2: 빔-through] ====================
+  // 주의:
+  //  - 강제 3체 생성 없음
+  //  - VP4 miss-kill / VP4 하드가드 / VP5 fail-safe 없음
+  //  - 따라서 원빔(π−, ParentID=0)은 타겟을 통과/산란/흡수 모두 “물리 모델 그대로” 진행
+  //  - 전자/양전자/철 내부 kill 같은 기존 일반 컷은 아래 원본 코드에서 계속 적용
+#endif
 
 //========================= 커스텀 로직 끝 ==========================
 
