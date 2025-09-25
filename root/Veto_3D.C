@@ -13,8 +13,7 @@
 // 사용법:
 //   root -l
 //   .L Veto_3D.C+
-//   BVH_veto_from_beammask("E45_BVH1_60mm_54.root","E45_overkill_54.root",
-//                          0.10,0.04,0.04, 1, /*printPerBH2=*/1);
+//   BVH_veto_from_beammask("E45_BVH1_60mm_54.root","E45_overkill_54.root", 0.10,0.04,0.04, 1, /*printPerBH2=*/1);
 //
 // 주의:
 //   - 세그 개수는 BH2=15, BVH_U=15, BVH_D=54로 가정 (네 파일 확인 결과)
