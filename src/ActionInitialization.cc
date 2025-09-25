@@ -5,6 +5,8 @@
 #include "RunAction.hh"
 #include "EventAction.hh"
 #include "SteppingAction.hh"
+//jaejin
+#include "StackingAction.hh"
 
 //_____________________________________________________________________________
 ActionInitialization::ActionInitialization()
@@ -30,4 +32,5 @@ ActionInitialization::Build() const
   SetUserAction(new RunAction);
   SetUserAction(new EventAction);
   SetUserAction(new SteppingAction);
+  SetUserAction(new StackingAction); //jaejin_25.9.25
 }

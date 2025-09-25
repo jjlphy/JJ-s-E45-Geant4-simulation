@@ -44,7 +44,7 @@ void view_detectors_BVH() {
   gStyle->SetOptStat(1111);
   gStyle->SetPalette(kBird);
 
-  TFile *f = TFile::Open("E45_BVH1_60mm_54.root","READ");
+  TFile *f = TFile::Open("E45_BVH1_60mm_54_7218.root","READ");
   if (!f || f->IsZombie()) { Error("view_detectors_BVH","cannot open file"); return; }
   auto *tree = (TTree*)f->Get("g4hyptpc");
   if (!tree) { Error("view_detectors_BVH","tree g4hyptpc not found"); return; }
@@ -67,8 +67,8 @@ void view_detectors_BVH() {
 
   // 히스토그램 (BVH_D X범위는 중심 350 부근으로 잡아 보기 좋게)
   TH2D *h_hit_bh2   = new TH2D("h_hit_bh2",   "BH2 Hit Distribution;X [mm];Y [mm]", 250, -100, 150, 200, -100, 100);
-  TH2D *h_hit_bvh_u = new TH2D("h_hit_bvh_u", "BVH_U Hit Distribution;X [mm];Y [mm]", 300, -100, 200, 200, -150, 150);
-  TH2D *h_hit_bvh_d = new TH2D("h_hit_bvh_d", "BVH_D Hit Distribution;X [mm];Y [mm]", 500, 100, 600, 200, -150, 150);
+  TH2D *h_hit_bvh_u = new TH2D("h_hit_bvh_u", "BVH_U Hit Distribution;X [mm];Y [mm]", 200, -50, 150, 200, -150, 150);
+  TH2D *h_hit_bvh_d = new TH2D("h_hit_bvh_d", "BVH_D Hit Distribution;X [mm];Y [mm]", 800, 100, 900, 200, -150, 150);
 
   const Long64_t n = tree->GetEntries();
   for (Long64_t i=0;i<n;++i){
