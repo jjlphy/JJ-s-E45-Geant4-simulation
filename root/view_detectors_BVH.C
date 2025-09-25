@@ -44,7 +44,7 @@ void view_detectors_BVH() {
   gStyle->SetOptStat(1111);
   gStyle->SetPalette(kBird);
 
-  TFile *f = TFile::Open("E45_BVH1_60mm_54_7218.root","READ");
+  TFile *f = TFile::Open("./rootfile/E45_overkill_54.root","READ");
   if (!f || f->IsZombie()) { Error("view_detectors_BVH","cannot open file"); return; }
   auto *tree = (TTree*)f->Get("g4hyptpc");
   if (!tree) { Error("view_detectors_BVH","tree g4hyptpc not found"); return; }
