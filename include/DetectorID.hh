@@ -27,7 +27,7 @@ const Int_t NumOfSegKVC  = 8;
 const Int_t NumOfSegFTOF = 24;
 const Int_t NumOfPlaneHTOF = 8;
 const Int_t NumOfSegHTOFOnePlane = NumOfSegHTOF / NumOfPlaneHTOF;
-const Int_t NumOfSegBVH_U  = 15; // BVH up
+const Int_t NumOfSegBVH_U  = 22; // BVH up
 const Int_t NumOfSegBVH_D  = 32; // BVH downstream
 const Int_t NumOfSegT0  = 5; // T0
 
