@@ -49,8 +49,8 @@ static std::map<int, VPRange> kVPRange = {
 // (3) ★ VP별 오버레이 (세그 개수/폭/높이/라벨 간격) ★
 struct OverlaySpec { int nSeg; double segW, segH; int labelEvery; };
 static std::map<int, OverlaySpec> kOverlay = {
-  {1, {22, 10.0,  140.0, 5}},   // Upstream(BVH_U)
-  {2, {22, 10.0,  140.0, 5}},
+  {1, {15, 10.0,  60.0, 5}},   // Upstream(BVH_U)
+  {2, {15, 10.0,  60.0, 5}},
   {6, {64, 10.0, 434.0,10}},   // Downstream(BVH_D)
   {7, {64, 10.0, 434.0,10}},
   {8, {64, 10.0, 434.0,10}},
