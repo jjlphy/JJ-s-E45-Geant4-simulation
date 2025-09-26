@@ -1,5 +1,19 @@
 // BVH_3D_with_SCH.C
-// (exclusion of specific (BH2, BVH_U, BVH_D) triplets + previous features)
+// (exclusion + inclusion of specific (BH2,BVH_U,BVH_D) triplets
+//  + global color scale + denom = BH2 && BVH_U + palette label tuning
+//  + Dilation in U(=BVH_U) and SCH(=BVH_D) for veto matching
+//  + Red boxes also reflect dilation (configurable))
+//
+// 사용법:
+//   root -l
+//   .L BVH_3D_with_SCH.C+
+//   run_analysis();  // event_threshold 등은 아래에서 조정
+//
+// 메모:
+// - 제외(exclude): 완전 배제 (fill/마스크/빨간박스/매칭)
+// - 포함(include): 임계치 무시하고 마스크/빨간박스/매칭에 강제 포함 (fill 카운트는 건드리지 않음)
+// - 충돌 시 exclude 우선
+// - 팽창(dilation): 매칭/표시 모두에 반영(옵션). 반경은 ±u_dilate_halfwidth, ±sch_dilate_halfwidth
 
 #include "Rtypes.h"
 #include "TFile.h"
@@ -33,10 +47,25 @@ static const int N_SCH  = 64; // 0..63
 static const bool use_sch_dilation     = true; // SCH 겹침 보정 사용
 static const int  sch_dilate_halfwidth = 1;    // ±1 strip 확장
 
-// ====== NEW: Exclusion list (BH2, BVH_U, BVH_D=SCH) ======
+// [NEW] ====== U-side (BVH_U) dilation ======
+static const bool use_u_dilation       = true; // BVH_U도 넉넉히 ±1 포함
+static const int  u_dilate_halfwidth   = 1;    // ±1 strip 확장
+
+// [NEW] ====== Red-box drawing options ======
+static const bool draw_dilated_boxes   = true; // 팽창된 이웃도 빨간 박스로 표시
+static const bool distinguish_dilated  = true; // 원래셀=실선/굵게, 팽창셀=점선/얇게
+
+// ====== Exclusion / Inclusion lists (BH2, BVH_U, BVH_D=SCH) ======
 static std::vector<std::tuple<int,int,int>> kExcludedTriplets = {
-  {0, 1, 4},   // 예시: (BH2=0, BVH_U=1, BVH_D=4) 제외
-  // {h,u,s}, ... 여기에 원하는 만큼 추가
+  {0, 1, 4},{0,1,4},{2,4,4},{2,5,2},{3,2,5},{3,8,0},{4,2,61},
+{4,3,3},{4,3,47},{4,3,48},{5,5,52},{6,5,4},{6,5,51},
+{7,6,54},{8,8,58},{8,9,51},{8,10,2},{9,5,52},{9,10,8},
+{11,7,55},{11,9,55}   // 예시: (BH2=0, BVH_U=1, SCH=4) 제외
+  // {h,u,s}, ...
+};
+static std::vector<std::tuple<int,int,int>> kIncludedTriplets = {
+  // {3, 4, 17},  // 임계치와 무관하게 강제 포함하고 싶을 때
+  // {h,u,s}, ...
 };
 static inline int key3(int h,int u,int s){ return (h<<16) | (u<<8) | s; }
 
@@ -75,7 +104,7 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
+void BVH_3D(const char* fname = "../E45_2pi_Ver4.root",
             double ecutBH2MeV   = 0.10,
             double ecutUMeV     = 0.04,
             double ecutSCHMeV   = 0.04,
@@ -84,13 +113,19 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   gSystem->Load("libPhysics");
   gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
 
-  // 0) Build exclusion set (fast lookup)
-  std::unordered_set<int> EX;
+  // 0) Build exclusion/inclusion sets (fast lookup)
+  std::unordered_set<int> EX, INC;
   EX.reserve(kExcludedTriplets.size()*2+8);
+  INC.reserve(kIncludedTriplets.size()*2+8);
   for(const auto& t : kExcludedTriplets){
     int h,u,s; std::tie(h,u,s)=t;
     if(0<=h && h<N_BH2 && 0<=u && u<N_BVHU && 0<=s && s<N_SCH)
       EX.insert(key3(h,u,s));
+  }
+  for(const auto& t : kIncludedTriplets){
+    int h,u,s; std::tie(h,u,s)=t;
+    if(0<=h && h<N_BH2 && 0<=u && u<N_BVHU && 0<=s && s<N_SCH)
+      INC.insert(key3(h,u,s));
   }
 
   // 1) Open file and TTree
@@ -118,7 +153,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
                        N_SCH,  -0.5, N_SCH -0.5);
   }
 
-  // 4) First pass: fill histograms
+  // 4) First pass: fill histograms (exclude during fill)
   const Long64_t N = tr->GetEntries();
   std::vector<int> hitsH, hitsU, hitsS;
   hitsH.reserve(8); hitsU.reserve(8); hitsS.reserve(8);
@@ -138,8 +173,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       TH2F* H = h_ud[h];
       for (int u : hitsU){
         for (int s : hitsS){
-          // === NEW: exclude specific (h,u,s) ===
-          if(EX.count(key3(h,u,s))) continue;
+          if(EX.count(key3(h,u,s))) continue; // exclude는 fill 단계부터 배제
           H->Fill(u, s);
         }
       }
@@ -158,7 +192,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   if (globalMax <= 0) globalMax = 1.0;
   std::cout << "[Info] Global Z max = " << globalMax << std::endl;
 
-  // 5) Build masks (with SCH dilation) – excluded cells NEVER enter mask
+  // 5) Build masks with dilation (U±, SCH±). Exclusion wins over inclusion.
   std::vector< std::vector<char> > base_mask(N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
   std::vector< std::vector<char> > mask      (N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
 
@@ -168,18 +202,38 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       for(int by=1; by<=H->GetNbinsY(); ++by){
         const int u = bx-1;
         const int s = by-1;
-        if(EX.count(key3(h,u,s))) continue;                     // <<< exclude
-        if(H->GetBinContent(bx,by) < event_threshold) continue; // threshold
-        base_mask[h][u*N_SCH + s] = 1;
-        if(use_sch_dilation){
-          const int s_lo = std::max(0, s - sch_dilate_halfwidth);
-          const int s_hi = std::min(N_SCH-1, s + sch_dilate_halfwidth);
-          for(int ss = s_lo; ss <= s_hi; ++ss){
-            if(!EX.count(key3(h,u,ss)))                         // <<< exclude dilated cells too
-              mask[h][u*N_SCH + ss] = 1;
+        const int k = key3(h,u,s);
+        if(EX.count(k)) continue;  // 제외는 전부 패스
+
+        const bool is_included = INC.count(k); // 강제 포함 여부
+        const bool pass_thresh = (H->GetBinContent(bx,by) >= event_threshold);
+
+        if(is_included || pass_thresh){
+          base_mask[h][u*N_SCH + s] = 1;
+
+          // U/SCH 팽창 범위 계산
+          const int u_lo = use_u_dilation
+                           ? std::max(0, u - u_dilate_halfwidth)
+                           : u;
+          const int u_hi = use_u_dilation
+                           ? std::min(N_BVHU-1, u + u_dilate_halfwidth)
+                           : u;
+
+          const int s_lo = use_sch_dilation
+                           ? std::max(0, s - sch_dilate_halfwidth)
+                           : s;
+          const int s_hi = use_sch_dilation
+                           ? std::min(N_SCH-1, s + sch_dilate_halfwidth)
+                           : s;
+
+          // U×SCH 이웃 셀을 마스크에 포함 (표시/매칭 모두에서 사용 가능하도록)
+          for(int uu = u_lo; uu <= u_hi; ++uu){
+            for(int ss = s_lo; ss <= s_hi; ++ss){
+              const int kd = key3(h,uu,ss);
+              if(!EX.count(kd))
+                mask[h][uu*N_SCH + ss] = 1;
+            }
           }
-        }else{
-          mask[h][u*N_SCH + s] = 1;
         }
       }
     }
@@ -215,7 +269,8 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
         for(int u : hitsU){
           const int base = u * N_SCH;
           for(int s : hitsS){
-            if(EX.count(key3(h,u,s))) continue;                 // <<< exclude at match
+            const int k = key3(h,u,s);
+            if(EX.count(k)) continue;           // 제외는 무시
             if(mask[h][base + s]) { matched_h = true; global_match = true; break; }
           }
           if(matched_h) break;
@@ -233,7 +288,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   gStyle->SetNumberContours(50);
   TGaxis::SetMaxDigits(3);
 
-  // 8) Draw histograms + grid + red boxes (skip excluded cells)
+  // 8) Draw histograms + grid + red boxes (mask 반영)
   TLine* grid_line = new TLine();
   grid_line->SetLineStyle(kDotted);
   grid_line->SetLineColor(kGray+1);
@@ -254,8 +309,8 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
     TH2F* H = h_ud[h];
     H->SetMinimum(0);
     H->SetMaximum(globalMax);
-    H->GetXaxis()->SetTitle("#BVH1 Seg");
-    H->GetYaxis()->SetTitle("#BVH2 Seg");
+    H->GetXaxis()->SetTitle("#BVH_U Seg");
+    H->GetYaxis()->SetTitle("#BVH_D Seg");
     H->Draw("COLZ");
     gPad->Update();
 
@@ -283,22 +338,45 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       grid_line->DrawLine(x_min, y_pos, x_max, y_pos);
     }
 
-    // 빨간 박스 (>= threshold)지만, 제외된 칸은 그리지 않음
+    // [NEW] 빨간 박스: mask(팽창 포함) 기준으로 표시
     for (int bx = 1; bx <= H->GetNbinsX(); ++bx) {
       for (int by = 1; by <= H->GetNbinsY(); ++by) {
         const int u = bx-1, s = by-1;
-        if(EX.count(key3(h,u,s))) continue;                    // <<< skip excluded cell
-        if (H->GetBinContent(bx, by) >= event_threshold) {
-          const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
-          const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
-          const double y1 = H->GetYaxis()->GetBinLowEdge(by);
-          const double y2 = H->GetYaxis()->GetBinUpEdge(by);
-          auto *box = new TBox(x1, y1, x2, y2);
-          box->SetFillStyle(0);
-          box->SetLineColor(kRed);
-          box->SetLineWidth(2);
-          box->Draw("SAME");
+        const int k = key3(h,u,s);
+        if(EX.count(k)) continue; // 제외 조합은 표시하지 않음
+
+        const bool in_base = (base_mask[h][u*N_SCH + s] != 0); // 핵심 셀
+        const bool in_mask = (mask[h][u*N_SCH + s]     != 0);  // 팽창 포함 전체
+
+        if (!draw_dilated_boxes) {
+          if (!in_base) continue; // 예전과 동일
+        } else {
+          if (!in_mask) continue; // 팽창 포함해서 표시
         }
+
+        const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
+        const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
+        const double y1 = H->GetYaxis()->GetBinLowEdge(by);
+        const double y2 = H->GetYaxis()->GetBinUpEdge(by);
+
+        auto *box = new TBox(x1, y1, x2, y2);
+        box->SetFillStyle(0);
+        box->SetLineColor(kRed);
+
+        if (draw_dilated_boxes && distinguish_dilated) {
+          if (in_mask && !in_base) {
+            box->SetLineStyle(kDashed); // 팽창 셀: 점선
+            box->SetLineWidth(2);
+          } else {
+            box->SetLineStyle(kSolid);  // 원래 셀: 실선
+            box->SetLineWidth(3);
+          }
+        } else {
+          box->SetLineStyle(kSolid);
+          box->SetLineWidth(2);
+        }
+
+        box->Draw("SAME");
       }
     }
     gPad->RedrawAxis();
@@ -318,6 +396,8 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   std::cout << "BVH_U energy cut (MeV)      : " << ecutUMeV     << "\n";
   std::cout << "SCH energy cut (MeV)        : " << ecutSCHMeV   << "\n";
   std::cout << "Highlight threshold (counts): " << event_threshold << " (>=)\n";
+  std::cout << "U dilation                  : " << (use_u_dilation ? "ON" : "OFF")
+            << "  (±" << u_dilate_halfwidth << ")\n";
   std::cout << "SCH dilation                : " << (use_sch_dilation ? "ON" : "OFF")
             << "  (±" << sch_dilate_halfwidth << ")\n";
   std::cout << "Events with BH2 && BVH_U    : " << denom_all << "  (denominator)\n";
@@ -350,9 +430,15 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
 // ================== Convenience wrapper ==================
 void run_analysis() {
   int event_threshold = 1; // 필요 시 100 등으로 상향
-  BVH_3D("E45_Beam_Ver4.root", 0.10, 0.04, 0.04, event_threshold);
-  std::cout << "[Config] Red boxes mark bins with counts >= "
-            << event_threshold << ".  (SCH dilation="
+  BVH_3D("../E45_2pi_Ver4.root", 0.10, 0.04, 0.04, event_threshold);
+  std::cout << "[Config] Red boxes mark bins with "
+            << (draw_dilated_boxes ? "mask (dilated)" : "base (non-dilated)")
+            << " cells >= threshold.  (U dilation="
+            << (use_u_dilation ? "ON" : "OFF")
+            << ", ±" << u_dilate_halfwidth
+            << "; SCH dilation="
             << (use_sch_dilation ? "ON" : "OFF")
-            << ", ±" << sch_dilate_halfwidth << ")\n";
+            << ", ±" << sch_dilate_halfwidth
+            << "; distinguish_dilated="
+            << (distinguish_dilated ? "ON" : "OFF") << ")\n";
 }

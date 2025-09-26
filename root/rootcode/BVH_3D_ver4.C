@@ -1,5 +1,9 @@
-// BVH_3D_with_SCH.C
-// (exclusion of specific (BH2, BVH_U, BVH_D) triplets + previous features)
+// BVH_3D_ver4.C
+// (exclusion/inclusion + global scale + denom=BH2&&BVH_U + palette tuning
+//  + Dilation in U/SCH for veto matching
+//  + Red boxes reflect dilation
+//  + Save per-pad histogram PNG
+//  + Print & SAVE all overlayed {BH2, BVH_U, BVH_D} triplets to overlay_triplets.txt)
 
 #include "Rtypes.h"
 #include "TFile.h"
@@ -23,6 +27,7 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include <fstream>  // [NEW] for saving overlay triplets
 
 // -------- Detector Segmentation --------
 static const int N_BH2  = 15; // 0..14
@@ -33,10 +38,23 @@ static const int N_SCH  = 64; // 0..63
 static const bool use_sch_dilation     = true; // SCH 겹침 보정 사용
 static const int  sch_dilate_halfwidth = 1;    // ±1 strip 확장
 
-// ====== NEW: Exclusion list (BH2, BVH_U, BVH_D=SCH) ======
+// ====== U-side (BVH_U) dilation ======
+static const bool use_u_dilation       = true; // BVH_U도 넉넉히 ±1 포함
+static const int  u_dilate_halfwidth   = 1;    // ±1 strip 확장
+
+// ====== Red-box drawing options ======
+static const bool draw_dilated_boxes   = true; // 팽창된 이웃도 빨간 박스로 표시
+static const bool distinguish_dilated  = true; // 원래셀=실선/굵게, 팽창셀=점선/얇게
+
+// ====== Exclusion / Inclusion lists (BH2, BVH_U, BVH_D=SCH) ======
 static std::vector<std::tuple<int,int,int>> kExcludedTriplets = {
-  {0, 1, 4},   // 예시: (BH2=0, BVH_U=1, BVH_D=4) 제외
-  // {h,u,s}, ... 여기에 원하는 만큼 추가
+  {0,1,4},{0,1,4},{2,4,4},{2,5,2},{3,2,5},{3,8,0},{4,2,61},
+  {4,3,3},{4,3,47},{4,3,48},{5,5,52},{6,5,4},{6,5,51},
+  {7,6,54},{8,8,58},{8,9,51},{8,10,2},{9,5,52},{9,10,8},
+  {11,7,55},{11,9,55}
+};
+static std::vector<std::tuple<int,int,int>> kIncludedTriplets = {
+  // {3, 4, 17},
 };
 static inline int key3(int h,int u,int s){ return (h<<16) | (u<<8) | s; }
 
@@ -75,7 +93,7 @@ static inline void get_unique_hits(const std::vector<TParticle>* v,
 }
 
 // ================== Main Analysis Function ==================
-void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
+void BVH_3D(const char* fname = "../E45_Beam_Ver4.root",
             double ecutBH2MeV   = 0.10,
             double ecutUMeV     = 0.04,
             double ecutSCHMeV   = 0.04,
@@ -84,13 +102,19 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   gSystem->Load("libPhysics");
   gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
 
-  // 0) Build exclusion set (fast lookup)
-  std::unordered_set<int> EX;
+  // 0) Build exclusion/inclusion sets (fast lookup)
+  std::unordered_set<int> EX, INC;
   EX.reserve(kExcludedTriplets.size()*2+8);
+  INC.reserve(kIncludedTriplets.size()*2+8);
   for(const auto& t : kExcludedTriplets){
     int h,u,s; std::tie(h,u,s)=t;
     if(0<=h && h<N_BH2 && 0<=u && u<N_BVHU && 0<=s && s<N_SCH)
       EX.insert(key3(h,u,s));
+  }
+  for(const auto& t : kIncludedTriplets){
+    int h,u,s; std::tie(h,u,s)=t;
+    if(0<=h && h<N_BH2 && 0<=u && u<N_BVHU && 0<=s && s<N_SCH)
+      INC.insert(key3(h,u,s));
   }
 
   // 1) Open file and TTree
@@ -112,13 +136,13 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   std::vector<TH2F*> h_ud(N_BH2);
   for (int h = 0; h < N_BH2; ++h) {
     TString h_name  = TString::Format("h_bvhu_sch_bh2_%d", h);
-    TString h_title = TString::Format("BH2=%d;#BVH_U Seg;#BVH_D Seg", h);
+    TString h_title = TString::Format("BH2=%d;#BVH1 Seg;#BVH2 Seg");
     h_ud[h] = new TH2F(h_name, h_title,
                        N_BVHU, -0.5, N_BVHU-0.5,
                        N_SCH,  -0.5, N_SCH -0.5);
   }
 
-  // 4) First pass: fill histograms
+  // 4) First pass: fill histograms (exclude during fill)
   const Long64_t N = tr->GetEntries();
   std::vector<int> hitsH, hitsU, hitsS;
   hitsH.reserve(8); hitsU.reserve(8); hitsS.reserve(8);
@@ -138,8 +162,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       TH2F* H = h_ud[h];
       for (int u : hitsU){
         for (int s : hitsS){
-          // === NEW: exclude specific (h,u,s) ===
-          if(EX.count(key3(h,u,s))) continue;
+          if(EX.count(key3(h,u,s))) continue; // exclude는 fill 단계부터 배제
           H->Fill(u, s);
         }
       }
@@ -158,7 +181,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   if (globalMax <= 0) globalMax = 1.0;
   std::cout << "[Info] Global Z max = " << globalMax << std::endl;
 
-  // 5) Build masks (with SCH dilation) – excluded cells NEVER enter mask
+  // 5) Build masks with dilation (U±, SCH±). Exclusion wins over inclusion.
   std::vector< std::vector<char> > base_mask(N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
   std::vector< std::vector<char> > mask      (N_BH2, std::vector<char>(N_BVHU * N_SCH, 0));
 
@@ -168,18 +191,27 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       for(int by=1; by<=H->GetNbinsY(); ++by){
         const int u = bx-1;
         const int s = by-1;
-        if(EX.count(key3(h,u,s))) continue;                     // <<< exclude
-        if(H->GetBinContent(bx,by) < event_threshold) continue; // threshold
-        base_mask[h][u*N_SCH + s] = 1;
-        if(use_sch_dilation){
-          const int s_lo = std::max(0, s - sch_dilate_halfwidth);
-          const int s_hi = std::min(N_SCH-1, s + sch_dilate_halfwidth);
-          for(int ss = s_lo; ss <= s_hi; ++ss){
-            if(!EX.count(key3(h,u,ss)))                         // <<< exclude dilated cells too
-              mask[h][u*N_SCH + ss] = 1;
+        const int k = key3(h,u,s);
+        if(EX.count(k)) continue;  // 제외는 전부 패스
+
+        const bool is_included = INC.count(k); // 강제 포함 여부
+        const bool pass_thresh = (H->GetBinContent(bx,by) >= event_threshold);
+
+        if(is_included || pass_thresh){
+          base_mask[h][u*N_SCH + s] = 1;
+
+          const int u_lo = use_u_dilation ? std::max(0, u - u_dilate_halfwidth) : u;
+          const int u_hi = use_u_dilation ? std::min(N_BVHU-1, u + u_dilate_halfwidth) : u;
+          const int s_lo = use_sch_dilation ? std::max(0, s - sch_dilate_halfwidth) : s;
+          const int s_hi = use_sch_dilation ? std::min(N_SCH-1, s + sch_dilate_halfwidth) : s;
+
+          for(int uu = u_lo; uu <= u_hi; ++uu){
+            for(int ss = s_lo; ss <= s_hi; ++ss){
+              const int kd = key3(h,uu,ss);
+              if(!EX.count(kd))
+                mask[h][uu*N_SCH + ss] = 1;
+            }
           }
-        }else{
-          mask[h][u*N_SCH + s] = 1;
         }
       }
     }
@@ -215,7 +247,8 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
         for(int u : hitsU){
           const int base = u * N_SCH;
           for(int s : hitsS){
-            if(EX.count(key3(h,u,s))) continue;                 // <<< exclude at match
+            const int k = key3(h,u,s);
+            if(EX.count(k)) continue;           // 제외는 무시
             if(mask[h][base + s]) { matched_h = true; global_match = true; break; }
           }
           if(matched_h) break;
@@ -233,7 +266,16 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   gStyle->SetNumberContours(50);
   TGaxis::SetMaxDigits(3);
 
-  // 8) Draw histograms + grid + red boxes (skip excluded cells)
+  // === 오버레이 좌표 로깅 & 파일 저장 준비 ===
+  static const bool log_overlay_coords   = true;                    // 터미널 출력
+  static const bool save_overlay_to_file = true;                    // [NEW] 파일로 저장
+  static const char* overlay_filename    = "overlay_triplets.txt";  // [NEW]
+
+  std::unordered_set<int> overlay_set;
+  overlay_set.reserve(4096);
+  std::vector<std::tuple<int,int,int>> overlay_list;
+
+  // 8) Draw histograms + grid + red boxes (mask 반영)
   TLine* grid_line = new TLine();
   grid_line->SetLineStyle(kDotted);
   grid_line->SetLineColor(kGray+1);
@@ -283,30 +325,96 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       grid_line->DrawLine(x_min, y_pos, x_max, y_pos);
     }
 
-    // 빨간 박스 (>= threshold)지만, 제외된 칸은 그리지 않음
+    // 빨간 박스: mask(팽창 포함) 기준으로 표시 + 좌표 수집
     for (int bx = 1; bx <= H->GetNbinsX(); ++bx) {
       for (int by = 1; by <= H->GetNbinsY(); ++by) {
         const int u = bx-1, s = by-1;
-        if(EX.count(key3(h,u,s))) continue;                    // <<< skip excluded cell
-        if (H->GetBinContent(bx, by) >= event_threshold) {
-          const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
-          const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
-          const double y1 = H->GetYaxis()->GetBinLowEdge(by);
-          const double y2 = H->GetYaxis()->GetBinUpEdge(by);
-          auto *box = new TBox(x1, y1, x2, y2);
-          box->SetFillStyle(0);
-          box->SetLineColor(kRed);
+        const int k = key3(h,u,s);
+        if(EX.count(k)) continue; // 제외 조합은 표시/로그하지 않음
+
+        const bool in_base = (base_mask[h][u*N_SCH + s] != 0);
+        const bool in_mask = (mask[h][u*N_SCH + s]     != 0);
+
+        if (!draw_dilated_boxes) {
+          if (!in_base) continue;
+        } else {
+          if (!in_mask) continue;
+        }
+
+        // draw red box
+        const double x1 = H->GetXaxis()->GetBinLowEdge(bx);
+        const double x2 = H->GetXaxis()->GetBinUpEdge(bx);
+        const double y1 = H->GetYaxis()->GetBinLowEdge(by);
+        const double y2 = H->GetYaxis()->GetBinUpEdge(by);
+        auto *box = new TBox(x1, y1, x2, y2);
+        box->SetFillStyle(0);
+        box->SetLineColor(kRed);
+        if (draw_dilated_boxes && distinguish_dilated) {
+          if (in_mask && !in_base) { box->SetLineStyle(kDashed); box->SetLineWidth(2); }
+          else                     { box->SetLineStyle(kSolid);  box->SetLineWidth(3); }
+        } else {
+          box->SetLineStyle(kSolid);
           box->SetLineWidth(2);
-          box->Draw("SAME");
+        }
+        box->Draw("SAME");
+
+        // 수집(중복 제거)
+        if (overlay_set.insert(k).second) {
+          overlay_list.emplace_back(h,u,s);
         }
       }
     }
     gPad->RedrawAxis();
 
+    // === 각 BH2 세그먼트별 pad만 PNG로 저장 ===
+    {
+      TString single = TString::Format("bvhu_sch_bh2_%02d.png", h);
+      gPad->Update();
+      gPad->SaveAs(single);
+    }
+
     if (h % 3 == 2 || h == N_BH2-1) {
       TString out = TString::Format("bvhu_sch_bh2_%02d_to_%02d.png",
                                     h - (h%3), std::min(h - (h%3) + 2,N_BH2-1));
       canvases.back()->SaveAs(out);
+    }
+  }
+
+  // === 정렬 후 터미널 출력 & 파일 저장 ===
+  std::sort(overlay_list.begin(), overlay_list.end(),
+            [](const std::tuple<int,int,int>& a, const std::tuple<int,int,int>& b){
+              if (std::get<0>(a) != std::get<0>(b)) return std::get<0>(a) < std::get<0>(b);
+              if (std::get<1>(a) != std::get<1>(b)) return std::get<1>(a) < std::get<1>(b);
+              return std::get<2>(a) < std::get<2>(b);
+            });
+
+  if (log_overlay_coords) {
+    std::cout << "\n[Overlay Triplets] (" << overlay_list.size() << " cells)\n";
+    std::cout << "{BH2, BVH_U, BVH_D} list matching current overlay rule ("
+              << (draw_dilated_boxes ? "mask+dilation" : "base only")
+              << ", EX excluded):\n";
+    for (const auto& t : overlay_list) {
+      int h,u,s; std::tie(h,u,s)=t;
+      std::cout << "{" << h << ", " << u << ", " << s << "}\n";
+    }
+    std::cout << "[End of Overlay Triplets]\n\n";
+  }
+
+  if (save_overlay_to_file) {
+    std::ofstream ofs(overlay_filename);
+    if (!ofs.is_open()) {
+      Error("BVH_3D", "Failed to open '%s' for writing.", overlay_filename);
+    } else {
+      ofs << "# Overlay Triplets exported by BVH_3D_ver4.C\n";
+      ofs << "# Format: {BH2, BVH_U, BVH_D}\n";
+      ofs << "# Rule: " << (draw_dilated_boxes ? "mask+dilation" : "base only") << ", EX excluded\n";
+      for (const auto& t : overlay_list) {
+        int h,u,s; std::tie(h,u,s)=t;
+        ofs << "{" << h << ", " << u << ", " << s << "}\n";
+      }
+      ofs.close();
+      std::cout << "[Info] Saved overlay triplets to '" << overlay_filename
+                << "' (" << overlay_list.size() << " lines)\n";
     }
   }
 
@@ -318,6 +426,8 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
   std::cout << "BVH_U energy cut (MeV)      : " << ecutUMeV     << "\n";
   std::cout << "SCH energy cut (MeV)        : " << ecutSCHMeV   << "\n";
   std::cout << "Highlight threshold (counts): " << event_threshold << " (>=)\n";
+  std::cout << "U dilation                  : " << (use_u_dilation ? "ON" : "OFF")
+            << "  (±" << u_dilate_halfwidth << ")\n";
   std::cout << "SCH dilation                : " << (use_sch_dilation ? "ON" : "OFF")
             << "  (±" << sch_dilate_halfwidth << ")\n";
   std::cout << "Events with BH2 && BVH_U    : " << denom_all << "  (denominator)\n";
@@ -333,7 +443,7 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
       double r = (double)num_h[h] / (double)denom_h[h] * 100.0;
       std::cout << " " << std::setw(2) << h << " :  "
                 << std::setw(9) << num_h[h] << " / " << std::setw(9) << denom_h[h]
-                << "  =  " << std::setw(7) << std::setprecision(3) << r << "\n";
+                << "  =  " << std::setw(7) << r << "\n";
     }else{
       std::cout << " " << std::setw(2) << h << " :  "
                 << std::setw(9) << 0 << " / " << std::setw(9) << 0
@@ -350,9 +460,15 @@ void BVH_3D(const char* fname = "E45_Beam_Ver4.root",
 // ================== Convenience wrapper ==================
 void run_analysis() {
   int event_threshold = 1; // 필요 시 100 등으로 상향
-  BVH_3D("E45_Beam_Ver4.root", 0.10, 0.04, 0.04, event_threshold);
-  std::cout << "[Config] Red boxes mark bins with counts >= "
-            << event_threshold << ".  (SCH dilation="
+  BVH_3D("../E45_Beam_Ver4.root", 0.10, 0.04, 0.04, event_threshold);
+  std::cout << "[Config] Red boxes mark bins with "
+            << (draw_dilated_boxes ? "mask (dilated)" : "base (non-dilated)")
+            << " cells >= threshold.  (U dilation="
+            << (use_u_dilation ? "ON" : "OFF")
+            << ", ±" << u_dilate_halfwidth
+            << "; SCH dilation="
             << (use_sch_dilation ? "ON" : "OFF")
-            << ", ±" << sch_dilate_halfwidth << ")\n";
+            << ", ±" << sch_dilate_halfwidth
+            << "; distinguish_dilated="
+            << (distinguish_dilated ? "ON" : "OFF") << ")\n";
 }
