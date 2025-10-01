@@ -133,7 +133,7 @@ void BVH_3D(const char* fname = "../E45_Beam_Ver2.root",
   std::vector<TH2F*> h_ud(N_BH2);
   for (int h = 0; h < N_BH2; ++h) {
     TString h_name  = TString::Format("h_bvhu_bvhd_bh2_%d", h);
-    TString h_title = TString::Format("BH2=%d;#BVH_U Seg;#BVH_D Seg", h);
+    TString h_title = TString::Format("BH2=%d;#BVH1;#BVH2", h);
     h_ud[h] = new TH2F(h_name, h_title,
                        N_BVHU, -0.5, N_BVHU-0.5,
                        N_BVHD, -0.5, N_BVHD-0.5);
@@ -295,8 +295,8 @@ void BVH_3D(const char* fname = "../E45_Beam_Ver2.root",
     TH2F* H = h_ud[h];
     H->SetMinimum(0);
     H->SetMaximum(globalMax);
-    H->GetXaxis()->SetTitle("#BVH_U Seg");
-    H->GetYaxis()->SetTitle("#BVH_D Seg");
+    H->GetXaxis()->SetTitle("#BVH1 Seg");
+    H->GetYaxis()->SetTitle("#BVH2 Seg");
     H->Draw("COLZ");
     gPad->Update();
 

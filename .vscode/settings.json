@@ -100,6 +100,9 @@
         "BVH_3D_ver2.C": "cpp",
         "BVH_Overkill_ver2.C": "cpp",
         "BVH_3D_ver3.C": "cpp",
-        "BVH_Overkill_ver3.C": "cpp"
+        "BVH_Overkill_ver3.C": "cpp",
+        "BVH_Overkill_ver2_2.C": "cpp",
+        "HTOFHit.C": "cpp",
+        "HTOF_final.C": "cpp"
     }
 }

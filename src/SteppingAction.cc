@@ -45,7 +45,7 @@
 
 // #define E45_SCENARIO_FORCE_2PI  // ← 이 줄이 있으면 “강제 2π 생성 모드”
 // (주석 처리하면 빔-through 모드)
-#define E45_SCENARIO_FORCE_2PI   // <-- 기본값: 강제 2π 생성
+//#define E45_SCENARIO_FORCE_2PI   // <-- 기본값: 강제 2π 생성
 
 namespace
 {
@@ -64,6 +64,7 @@ SteppingAction::~SteppingAction()
 {
 }
 
+// ------------------------- helper: 3-body spawner ---------------------------
 // ------------------------- helper: 3-body spawner ---------------------------
 namespace {
   // channel=0 : pi+ pi- n   , channel=1 : pi- pi0 p
@@ -95,17 +96,10 @@ namespace {
     TGenPhaseSpace gen;
     gen.SetDecay(W, 3, masses);
 
-    // small downstream bias (optional)
-    int tries=0;
-    for(;;){
-      gen.Generate();
-      bool ok=false;
-      for(int i=0;i<3;i++){
-        const TLorentzVector* d = gen.GetDecay(i);
-        if(d && d->Pz()>0){ ok=true; break; }
-      }
-      if(ok || ++tries>100) break;
-    }
+    // === 수정된 부분: bias 제거 ===
+    // 이전에는 최소 1개 forward(Pz>0) 조건이 있었음
+    // 이제는 한 번 Generate()만 해서 편향 없이 샘플링
+    gen.Generate();
 
     struct Out { const char* name; } outs0[3]={{"pi+"},{"pi-"},{"neutron"}};
     struct Out  outs1[3]={{"pi-"},{"pi0"},{"proton"}};
@@ -124,6 +118,7 @@ namespace {
     }
   }
 }
+
 // ----------------------------------------------------------------------------
 
 void
