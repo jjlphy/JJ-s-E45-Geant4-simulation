@@ -23,6 +23,7 @@
 #include <set>
 #include <iostream>
 #include <iomanip>
+#include <TLatex.h>
 
 static const int    kNPlaneHTOF  = 8;
 static const int    kSegPerPlane = 4;
