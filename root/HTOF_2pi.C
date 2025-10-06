@@ -1,14 +1,18 @@
-// HTOF_Summary_BH2_Cuts_Exclude15to20.C
+// HTOF_Summary_BH2_Cuts_ExcludeFlex.C
 // - BH2 게이트 & HTOF 세그먼트 매핑 유지
-// - 배제: seg 15..20
+// - 배제: exclude_spec ("15-20", "2,4,7-9", "none", "" 등)
 // - 2D 히트패턴은 "이벤트 내 서로 다른 세그먼트 집합" 간 교차곱으로 채움
-//   (같은 세그먼트 중복 히트는 1회만 기록)
 // - Multiplicity(M) = 유일 세그 수, M>=2 통계와 % 출력 포함
 //
 // 사용 예:
 //   root -l
-//   .L HTOF_Summary_BH2_Cuts_Exclude15to20.C+
-//   HTOF_Summary_BH2_Cuts_Exclude15to20("E45_VP5.root","g4hyptpc",200.0,+1,0,false,7);
+//   .L HTOF_Summary_BH2_Cuts_ExcludeFlex.C+
+//   // 기존과 동일 동작(15..20 배제)
+//   HTOF_Summary_BH2_Cuts_ExcludeFlex("E45_VP5.root","g4hyptpc",200.0,+1,0,false,7,"15-20");
+//   // 배제 없음
+//   HTOF_Summary_BH2_Cuts_ExcludeFlex("E45_VP5.root","g4hyptpc",200.0,+1,0,false,7,"none");
+//   // 사용자 정의 배제
+//   HTOF_Summary_BH2_Cuts_ExcludeFlex("E45_VP5.root","g4hyptpc",200.0,+1,0,false,7,"2,4,7-9");
 
 #include <TFile.h>
 #include <TTree.h>
@@ -21,6 +25,9 @@
 #include <TInterpreter.h>
 #include <vector>
 #include <set>
+#include <unordered_set>
+#include <sstream>
+#include <string>
 #include <iostream>
 #include <iomanip>
 #include <TLatex.h>
@@ -82,7 +89,8 @@ inline bool mapHitToSeg(double x,double y,double z,
   }
   if(best_i<0) return false;
 
-  plane = (best_i + plane_offset) % kNPlaneHTOF;
+  int plane_raw = best_i;
+  plane = (plane_raw + plane_offset) % kNPlaneHTOF;
   if(plane<0) plane += kNPlaneHTOF;
 
   local = inferLocalFromX(best_xloc, flip_local);
@@ -90,19 +98,58 @@ inline bool mapHitToSeg(double x,double y,double z,
   return true;
 }
 
-void HTOF_Summary_BH2_Cuts_Exclude15to20(const char* filename="E45_VP5.root",
+// ---- exclude_spec 파서 ("15-20,22,27-28" / "none" / "" 지원) ----
+static std::unordered_set<int> parse_exclude_spec(const char* exclude_spec){
+  std::unordered_set<int> excl;
+  if(!exclude_spec) return excl;
+  std::string s(exclude_spec);
+  // 공백 제거
+  s.erase(remove_if(s.begin(), s.end(), ::isspace), s.end());
+  if(s.empty() || s=="none" || s=="NONE" || s=="NoNe") return excl;
+
+  std::stringstream ss(s);
+  std::string tok;
+  while(std::getline(ss, tok, ',')){
+    if(tok.empty()) continue;
+    auto pos = tok.find('-');
+    if(pos==std::string::npos){
+      // 단일 값
+      int v = std::stoi(tok);
+      if(0<=v && v<kNSegHTOF) excl.insert(v);
+    }else{
+      // 범위
+      int a = std::stoi(tok.substr(0,pos));
+      int b = std::stoi(tok.substr(pos+1));
+      if(a>b) std::swap(a,b);
+      a = std::max(0,a); b = std::min(kNSegHTOF-1,b);
+      for(int v=a; v<=b; ++v) excl.insert(v);
+    }
+  }
+  return excl;
+}
+
+void HTOF_Summary_BH2_Cuts_ExcludeFlex(const char* filename="E45_VP5.root",
                            const char* treename="g4hyptpc",
                            double R_tol_mm = 200.0,
                            int    L_sign    = +1,
                            int    plane_offset = 0,
                            bool   flip_local  = false,
-                           int    mult_max    = 7)
+                           int    mult_max    = 7,
+                           const char* exclude_spec = "15-20")
 {
   // --- 파일/트리 ---
   TFile* f=TFile::Open(filename);
   if(!f||f->IsZombie()){ printf("Cannot open %s\n",filename); return; }
   TTree* T=(TTree*)f->Get(treename);
   if(!T){ printf("Tree %s not found\n",treename); return; }
+
+  // --- 배제 목록 파싱 ---
+  const auto EXCL = parse_exclude_spec(exclude_spec);
+  auto contains_excluded = [&EXCL](const std::set<int>& S)->bool{
+    if(EXCL.empty()) return false;
+    for(int s: S){ if(EXCL.count(s)) return true; }
+    return false;
+  };
 
   // --- 브랜치 ---
   std::vector<TParticle>* BH2 = nullptr;
@@ -111,15 +158,16 @@ void HTOF_Summary_BH2_Cuts_Exclude15to20(const char* filename="E45_VP5.root",
   T->SetBranchAddress("HTOF",&HTOF);
 
   // --- 히스토그램 ---
-  TH1D* hSeg_unique = new TH1D("hHTOF_seg_unique",
-    "HTOF Hit Pattern (UNIQUE/event, exclude 15-20);Seg ID;Counts",32,-0.5,31.5);
+  TString titleSeg; titleSeg.Form("HTOF Hit Pattern (UNIQUE/event, excl: %s);Seg ID;Counts", exclude_spec);
+  TH1D* hSeg_unique = new TH1D("hHTOF_seg_unique", titleSeg, 32,-0.5,31.5);
+
   TH2D* hPlaneLocal = new TH2D("hHTOF_plane_local",
-    "Plane vs Local (exclude 15-20);Plane;Local",8,-0.5,7.5,4,-0.5,3.5);
+    TString::Format("Plane vs Local (excl: %s);Plane;Local", exclude_spec), 8,-0.5,7.5,4,-0.5,3.5);
+
   TH1D* hMult = new TH1D("hHTOF_mult",
-    "Multiplicity per event (exclude 15-20);# unique hit seg;Events",
+    TString::Format("Multiplicity per event (excl: %s);# unique hit seg;Events", exclude_spec),
     mult_max+1,-0.5,mult_max+0.5);
 
-  // --- 2D 히트패턴(32×32) ---
   TH2D* hPiPlus_vs_PiMinus = new TH2D("hPiPlus_vs_PiMinus",
     "HTOF (pi^{+} seg) vs (pi^{-} seg);#pi^{+} seg ID;#pi^{-} seg ID",
     32,-0.5,31.5, 32,-0.5,31.5);
@@ -142,10 +190,10 @@ void HTOF_Summary_BH2_Cuts_Exclude15to20(const char* filename="E45_VP5.root",
     if(BH2->empty()) continue;
     N_bh2++;
 
-    // --- 이벤트 내 "유일 세그먼트" 집합들(같은 세그 중복 제거) ---
+    // --- 유일 세그먼트 집합 ---
     std::set<int> seg_all, seg_piPlus, seg_piMinus, seg_proton;
 
-    // --- HTOF 입자 분류 & 세그먼트 매핑 ---
+    // --- HTOF 분류 & 세그먼트 매핑 ---
     for(const auto& p : *HTOF){
       int plane,local,seg;
       if(!mapHitToSeg(p.Vx(),p.Vy(),p.Vz(),
@@ -163,15 +211,12 @@ void HTOF_Summary_BH2_Cuts_Exclude15to20(const char* filename="E45_VP5.root",
     if(seg_all.empty()) continue;
     N_bh2_htofAny++;
 
-    // --- 배제 세그먼트(15..20) 포함 시 스킵 ---
-    bool hasExcl=false;
-    for(int s : {15,16,17,18,19,20})
-      if(seg_all.count(s)) { hasExcl=true; break; }
-    if(hasExcl) continue;
+    // --- 배제 세그먼트 포함 시 스킵 (통계/히스토그램 모두 동일 조건) ---
+    if(contains_excluded(seg_all)) continue;
 
     N_cleanDenom++;
 
-    // --- Multiplicity (유일 세그 수) & 기본 분포 채움 ---
+    // --- Multiplicity & 히스토그램 ---
     int M=0;
     for(int s: seg_all){
       hSeg_unique->Fill(s);
@@ -189,14 +234,12 @@ void HTOF_Summary_BH2_Cuts_Exclude15to20(const char* filename="E45_VP5.root",
       if(seg_all.count(5)&&seg_all.count(6)) C56++;
     }
 
-    // === 2D 히트패턴 채우기(세그먼트 집합 교차곱; 같은 쌍은 1회만) ===
-    // π+ × π−  (X=π+, Y=π−)
+    // 2D 히트패턴 (교차곱)
     for(int sx : seg_piPlus){
       for(int sy : seg_piMinus){
         hPiPlus_vs_PiMinus->Fill(sx, sy);
       }
     }
-    // p × π−   (요청 축: X=p, Y=π−)
     for(int sx : seg_proton){
       for(int sy : seg_piMinus){
         hProton_vs_PiMinus->Fill(sx, sy);
@@ -207,20 +250,21 @@ void HTOF_Summary_BH2_Cuts_Exclude15to20(const char* filename="E45_VP5.root",
   auto pct=[](Long64_t a,Long64_t b){ return (b>0)?100.0*double(a)/double(b):0.0; };
 
   std::cout<<std::fixed<<std::setprecision(2);
-  std::cout<<"========== SUMMARY (exclude 15-20) ==========\n";
+  std::cout<<"========== SUMMARY (excl: "<<(exclude_spec?exclude_spec:"(null)")<<" ) ==========\n";
   std::cout<<"Total events                          : "<<N_total<<"\n";
   std::cout<<"BH2 pass                              : "<<N_bh2<<" ("<<pct(N_bh2,N_total)<<" % of total)\n";
   std::cout<<"BH2 pass & HTOF>=1                    : "<<N_bh2_htofAny<<" ("<<pct(N_bh2_htofAny,N_bh2)<<" % of BH2)\n";
-  std::cout<<"BH2 pass & HTOF>=1 & !{15..20}        : "<<N_cleanDenom<<" ("<<pct(N_cleanDenom,N_bh2)<<" % of BH2)\n";
+  std::cout<<"BH2 pass & HTOF>=1 & !{excl}          : "<<N_cleanDenom<<" ("<<pct(N_cleanDenom,N_bh2)<<" % of BH2)\n";
   std::cout<<"\nMultiplicity>=2                       : "<<N_clean_Mge2<<" ("<<pct(N_clean_Mge2,N_cleanDenom)<<" %)\n";
   std::cout<<"Multiplicity==2                       : "<<N_clean_Meq2<<" ("<<pct(N_clean_Meq2,N_cleanDenom)<<" %)\n";
   std::cout<<"  - pair(2,3)                         : "<<C23<<" ("<<pct(C23,N_clean_Meq2)<<" % of M==2)\n";
   std::cout<<"  - pair(3,4)                         : "<<C34<<" ("<<pct(C34,N_clean_Meq2)<<" % of M==2)\n";
   std::cout<<"  - pair(4,5)                         : "<<C45<<" ("<<pct(C45,N_clean_Meq2)<<" % of M==2)\n";
   std::cout<<"  - pair(5,6)                         : "<<C56<<" ("<<pct(C56,N_clean_Meq2)<<" % of M==2)\n";
-  std::cout<<"============================================\n";
+  std::cout<<"===========================================================\n";
 
-  TCanvas* c=new TCanvas("cHTOF_SUM_excl15to20","BH2-gated, exclude 15-20",1700,950);
+  TCanvas* c=new TCanvas("cHTOF_SUM_exclFlex",
+                         TString::Format("BH2-gated, excl: %s", exclude_spec),1700,950);
   c->Divide(3,2);
   c->cd(1); hSeg_unique->Draw("hist");
   c->cd(2); hPlaneLocal->Draw("colz");

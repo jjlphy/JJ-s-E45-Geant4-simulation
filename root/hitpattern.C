@@ -12,7 +12,7 @@ static const int N_BH2  = 15; // 0..14
 static const int N_BVHU = 22; // 0..21  <-- 수정
 static const int N_BVHD = 32; // 0..31  <-- 수정
 
-void hitpattern(const char* fname="E45_BVH4.root",
+void hitpattern(const char* fname="../E45_with_SCH.root",
                 bool DISTINCT_PER_EVENT=false,
                 bool SAVE=false)
 {

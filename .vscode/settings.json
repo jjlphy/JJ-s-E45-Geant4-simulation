@@ -104,6 +104,8 @@
         "BVH_Overkill_ver2_2.C": "cpp",
         "HTOFHit.C": "cpp",
         "HTOF_final.C": "cpp",
-        "HTOF_2pi.C": "cpp"
+        "HTOF_2pi.C": "cpp",
+        "BH2_Hitpattern.C": "cpp",
+        "ProbeBH2.C": "cpp"
     }
 }
