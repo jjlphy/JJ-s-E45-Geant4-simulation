@@ -1,12 +1,18 @@
 // -*- C++ -*-
+// SteppingAction.cc  (E45)
+// - 강제 2π 생성 모드(옵션) + 채널 선택(0/1/2)을 설정파일 Force2PiMode로 제어
+// - 기존 기능(지표 수집, SecondaryVertex 기록, VP4/VP5 가드, kill 컷 등) 유지
 
 #include "SteppingAction.hh"
 
 #include <unordered_map>
+#include <string>
+#include <cmath>  // std::hypot
 
 #include <G4Material.hh>
 #include <G4ParticleDefinition.hh>
 #include <G4ParticleTypes.hh>
+#include <G4ParticleTable.hh>
 #include <G4SteppingManager.hh>
 #include <G4Step.hh>
 #include <G4StepPoint.hh>
@@ -14,12 +20,11 @@
 #include <G4TrackStatus.hh>
 #include <G4VPhysicalVolume.hh>
 #include <G4RunManager.hh>
-
-// === [added] for spawning secondaries & fail-safe planes =========
 #include <G4EventManager.hh>
 #include <G4StackManager.hh>
+
 #include <Randomize.hh>           // G4UniformRand
-// ===============================================================
+#include <CLHEP/Units/SystemOfUnits.h>
 
 #include "ConfMan.hh"
 #include "PrintHelper.hh"
@@ -30,44 +35,55 @@
 #include "DCGeomMan.hh"
 #include "DetSizeMan.hh"
 
-#include "TLorentzVector.h"//jaejin
-#include "TGenPhaseSpace.h"//jaejin
+#include "TLorentzVector.h"
+#include "TGenPhaseSpace.h"
 
 // ==== SCENARIO SWITCH =======================================================
-// 1) 강제 2π 생성 모드 (현재 우리가 쓰던 모드)
+// 1) 강제 2π 생성 모드 (우리가 쓰던 모드)
 //    - 타겟 첫 진입에서 (π+ π− n) 또는 (π− π0 p) 생성하고 원빔 kill
 //    - 타겟 원기둥을 빗나간 원빔은 VP4에서 kill, VP5 fail-safe도 동작
 //
 // 2) 빔-through 모드
 //    - 강제 생성 없음, VP4/VP5 가드 없음 → 원빔은 물리 그대로 진행
-//    - (분석용으로 “진짜 빔-through 이벤트”를 수집할 때 사용)
+//    - (분석용으로 “진짜 빔-through 이벤트” 수집)
+//
+// 필요 시 주석 해제해서 사용:
+#define E45_SCENARIO_FORCE_2PI
 // ============================================================================
-
-// #define E45_SCENARIO_FORCE_2PI  // ← 이 줄이 있으면 “강제 2π 생성 모드”
-// (주석 처리하면 빔-through 모드)
-//#define E45_SCENARIO_FORCE_2PI   // <-- 기본값: 강제 2π 생성
 
 namespace
 {
-  auto& gAnaMan = AnaManager::GetInstance();
-  const auto& gConf = ConfMan::GetInstance();
+  auto&       gAnaMan = AnaManager::GetInstance();
+  const auto& gConf   = ConfMan::GetInstance();
+
+  // 0: ch0 only(π+π−n), 1: ch1 only(π−π0p), 2: 1:1 mixture
+  // ConfMan::Get 는 인자 하나만 받으므로 기본값은 설정파일에서 지정해야 함.
+  // 권장: conf에 "Force2PiMode: 2"
+  static const G4int kForce2PiModeRaw = gConf.Get<G4int>("Force2PiMode");
+  static const G4int kForce2PiMode =
+      (kForce2PiModeRaw==0 || kForce2PiModeRaw==1) ? kForce2PiModeRaw : 2;
 }
 
-//_____________________________________________________________________________
 SteppingAction::SteppingAction()
   : G4UserSteppingAction()
 {
+  // (옵션) 시작 시 현재 모드 표시
+  // G4cout << "[E45] Force2PiMode = " << kForce2PiMode
+  // #ifdef E45_SCENARIO_FORCE_2PI
+  //        << " (SCENARIO_FORCE_2PI=ON)"
+  // #else
+  //        << " (SCENARIO_FORCE_2PI=OFF)"
+  // #endif
+  //        << G4endl;
 }
 
-//_____________________________________________________________________________
 SteppingAction::~SteppingAction()
 {
 }
 
 // ------------------------- helper: 3-body spawner ---------------------------
-// ------------------------- helper: 3-body spawner ---------------------------
+// channel=0 : pi+ pi- n   , channel=1 : pi- pi0 p
 namespace {
-  // channel=0 : pi+ pi- n   , channel=1 : pi- pi0 p
   void Spawn3BodyAt(const G4Track* motherTrack, int channel,
                     const G4ThreeVector& vtx, G4StackManager* stackMan)
   {
@@ -96,9 +112,7 @@ namespace {
     TGenPhaseSpace gen;
     gen.SetDecay(W, 3, masses);
 
-    // === 수정된 부분: bias 제거 ===
-    // 이전에는 최소 1개 forward(Pz>0) 조건이 있었음
-    // 이제는 한 번 Generate()만 해서 편향 없이 샘플링
+    // 편향 제거: 1회 Generate()로 샘플링
     gen.Generate();
 
     struct Out { const char* name; } outs0[3]={{"pi+"},{"pi-"},{"neutron"}};
@@ -124,25 +138,33 @@ namespace {
 void
 SteppingAction::UserSteppingAction(const G4Step* theStep)
 {
+  using namespace CLHEP;
+
   static const G4bool KillStepInIron = gConf.Get<G4bool>("KillStepInIron");
 
-  auto theTrack = theStep->GetTrack();
+  auto theTrack    = theStep->GetTrack();
   auto theParticle = theTrack->GetParticleDefinition();
-  auto parentID = theTrack->GetParentID();
-  auto particleName = theParticle->GetParticleName();
-  auto particlePdgCode = theParticle->GetPDGEncoding();
-  auto particleMass = theParticle->GetPDGMass();
-  auto prePoint = theStep->GetPreStepPoint();
-  auto prePV = prePoint->GetPhysicalVolume();
-  auto prePVName = prePV->GetName();
-  auto postPoint = theStep->GetPostStepPoint();
-  auto theProcess = postPoint->GetProcessDefinedStep()->GetProcessName();
-  auto stepLength = theTrack->GetStepLength();
-  G4ThreeVector stepMiddlePosition = (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
-  G4ParticleTable* particleTable = G4ParticleTable::GetParticleTable();
+  auto parentID    = theTrack->GetParentID();
+  auto particleName= theParticle->GetParticleName();
+  auto particlePdg = theParticle->GetPDGEncoding();
+  auto particleMass= theParticle->GetPDGMass();
+
+  auto prePoint    = theStep->GetPreStepPoint();
+  auto postPoint   = theStep->GetPostStepPoint();
+
+  auto prePV       = prePoint->GetPhysicalVolume();
+  auto prePVName   = prePV ? prePV->GetName() : "";
+
+  auto theProcess  = postPoint->GetProcessDefinedStep()
+                   ? postPoint->GetProcessDefinedStep()->GetProcessName()
+                   : "";
+
+  auto stepLength  = theTrack->GetStepLength();
+  G4ThreeVector stepMiddlePosition =
+      (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
 
   // [helper] “원빔” 판정자: ParentID==0 && PDG==-211 (primary π−)
-  const bool isPrimaryBeam = (theTrack->GetParentID()==0 && particlePdgCode==-211);
+  const bool isPrimaryBeam = (parentID==0 && particlePdg==-211);
 
   // --------- (원본 코드) 지표 수집/기존 기능 ---------
   if (prePVName == "TargetPV") {
@@ -157,8 +179,10 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   std::pair<G4String, G4String> previous_particle = gAnaMan.GetPreviousParticle();
   G4ThreeVector previous_step_pos = gAnaMan.GetDecayPosition();
   G4int generator = gAnaMan.GetNextGenerator();
-  if (previous_particle.second == "Decay" && previous_particle.first == gAnaMan.GetFocusParticle(generator) ){
-    if ( gAnaMan.IsInsideHtof(previous_step_pos) ) gAnaMan.SetDecayParticleCode( particlePdgCode );
+  if (previous_particle.second == "Decay" &&
+      previous_particle.first  == gAnaMan.GetFocusParticle(generator) ){
+    if ( gAnaMan.IsInsideHtof(previous_step_pos) )
+      gAnaMan.SetDecayParticleCode( theParticle->GetPDGEncoding() );
     gAnaMan.SetFocusParentID( parentID );
   }
   gAnaMan.SetPreviousParticle(particleName, theProcess);
@@ -169,15 +193,15 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     (PrimaryGeneratorAction*) G4RunManager::GetRunManager()->GetUserPrimaryGeneratorAction();
 
   for(int i=0;i<10;i++){
-    if(particlePdgCode != generatorAction->m_primary_pdg[i]) continue;
+    if(particlePdg != generatorAction->m_primary_pdg[i]) continue;
     if(theTrack->GetTrackStatus() == fStopAndKill){
       const std::vector<const G4Track*>* secTracks = theStep->GetSecondaryInCurrentStep();
-      if (!secTracks->empty()) {
+      if (secTracks && !secTracks->empty()) {
         for (const auto& secTrack : *secTracks) {
           if (secTrack->GetCreatorProcess()) {
-            G4int motherPdgCode = particlePdgCode;
+            G4int motherPdgCode   = particlePdg;
             G4int daughterPdgCode = secTrack->GetDefinition()->GetPDGEncoding();
-            G4ThreeVector mom_se = secTrack->GetMomentum();
+            G4ThreeVector mom_se  = secTrack->GetMomentum();
             G4LorentzVector v_se(secTrack->GetPosition(), 0);
             G4LorentzVector p_se(mom_se, std::sqrt(std::pow(particleMass,2)+std::pow(mom_se.mag(),2)));
             gAnaMan.SetSecondaryVertex(daughterPdgCode,motherPdgCode,p_se,v_se);
@@ -188,11 +212,10 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   }
 
 #ifdef DEBUG
-  // ... (DEBUG 블록은 원본 그대로 유지)
+  // 필요 시 디버그 출력 추가
 #endif
 
 //=========================== 커스텀 로직 (토글) ===========================
-
 #ifdef E45_SCENARIO_FORCE_2PI
   // ==================== [모드 1: 강제 2π 생성] ====================
 
@@ -209,7 +232,7 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
 
       static const G4ThreeVector tgt_c  = gGeom.GetGlobalPosition("SHSTarget");
       static const G4ThreeVector tgt_sz = gSize.GetSize("Target");
-      const double Rout = tgt_sz.y();
+      const double Rout    = tgt_sz.y();
       const double half_dz = 0.5 * tgt_sz.z();
 
       const double z1 = prePoint->GetPosition().z();
@@ -222,11 +245,11 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
         const G4ThreeVector x_at = x1 + t*(x2 - x1);
 
         const G4ThreeVector rel = x_at - tgt_c;
-        const double r_xy = std::hypot(rel.x(), rel.y());
-        const bool inside_rad = (r_xy <= Rout + 1e-6);
-        const bool inside_z   = (std::abs(rel.z()) <= half_dz + 1e-6);
+        const double r_xy   = std::hypot(rel.x(), rel.y());
+        const bool inside_r = (r_xy <= Rout + 1e-6);
+        const bool inside_z = (std::abs(rel.z()) <= half_dz + 1e-6);
 
-        if (!(inside_rad && inside_z)) {
+        if (!(inside_r && inside_z)) {
           theTrack->SetTrackStatus(fStopAndKill);
           return;
         }
@@ -260,10 +283,18 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
         if (enterLH2 || enterTargetLike)
         {
           const G4ThreeVector vtx = postPoint->GetPosition();
-          int channel = (G4UniformRand()<0.5)? 0:1; // 0: π+π−n, 1: π−π0p
+
+          // ---- 채널 선택: Force2PiMode (0/1/2) ----
+          int channel = 0;
+          if      (kForce2PiMode == 0) channel = 0;                              // ch0 only
+          else if (kForce2PiMode == 1) channel = 1;                              // ch1 only
+          else                          channel = (G4UniformRand()<0.5)? 0 : 1;  // 1:1 mixture
 
           auto stackMan = G4EventManager::GetEventManager()->GetStackManager();
           if (stackMan) Spawn3BodyAt(theTrack, channel, vtx, stackMan);
+
+          // (선택) 채널을 트리에 저장하고 싶다면:
+          // gAnaMan.SetChannelID(channel);
 
           theTrack->SetTrackStatus(fStopAndKill); // 원빔 제거
           return;
@@ -283,7 +314,7 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
       const G4Material* postMat = postPoint->GetMaterial();
       const auto postMatName = postMat ? postMat->GetName() : "";
 
-      if (postMatName!="LH2" && z_post > z_vp4 + 0.5*CLHEP::mm) {
+      if (postMatName!="LH2" && z_post > z_vp4 + 0.5*mm) {
         theTrack->SetTrackStatus(fStopAndKill);
         return;
       }
@@ -309,18 +340,17 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
 
 #else
   // ==================== [모드 2: 빔-through] ====================
-  // 주의:
   //  - 강제 3체 생성 없음
   //  - VP4 miss-kill / VP4 하드가드 / VP5 fail-safe 없음
   //  - 따라서 원빔(π−, ParentID=0)은 타겟을 통과/산란/흡수 모두 “물리 모델 그대로” 진행
-  //  - 전자/양전자/철 내부 kill 같은 기존 일반 컷은 아래 원본 코드에서 계속 적용
+  //  - 전자/양전자/철 내부 kill 같은 기존 일반 컷은 아래에서 계속 적용
 #endif
-
 //========================= 커스텀 로직 끝 ==========================
 
+  // ---------------- 일반 컷 ----------------
   if(KillStepInIron){
     auto preMaterial = prePoint->GetMaterial();
-    if(preMaterial->GetName() == "Iron"){
+    if(preMaterial && preMaterial->GetName() == "Iron"){
       theTrack->SetTrackStatus(fStopAndKill);
       return;
     }
@@ -331,6 +361,7 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     return;
   }
 
+  // 필요 시 추가 가드 예시:
   // if(prePVName.contains("Coil") || prePVName.contains("Guard")){
   //   theTrack->SetTrackStatus(fStopAndKill);
   //   return;
