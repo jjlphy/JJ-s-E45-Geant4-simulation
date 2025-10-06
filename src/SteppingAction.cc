@@ -1,6 +1,7 @@
 // -*- C++ -*-
 // SteppingAction.cc  (E45)
-// - 강제 2π 생성 모드(옵션) + 채널 선택(0/1/2)을 설정파일 Force2PiMode로 제어
+// - 강제 2π 생성 모드(옵션) + 채널 선택(0/1/2)을 설정파일 Force2PiMode로 "런타임 동적" 반영
+// - 실행 시작 시 실제 읽힌 모드값을 1회 출력 (A. 설정 반영 체크)
 // - 기존 기능(지표 수집, SecondaryVertex 기록, VP4/VP5 가드, kill 컷 등) 유지
 
 #include "SteppingAction.hh"
@@ -8,6 +9,7 @@
 #include <unordered_map>
 #include <string>
 #include <cmath>  // std::hypot
+#include <cstdlib> // std::getenv   // [ADD]
 
 #include <G4Material.hh>
 #include <G4ParticleDefinition.hh>
@@ -48,7 +50,7 @@
 //    - (분석용으로 “진짜 빔-through 이벤트” 수집)
 //
 // 필요 시 주석 해제해서 사용:
-//#define E45_SCENARIO_FORCE_2PI
+#define E45_SCENARIO_FORCE_2PI
 // ============================================================================
 
 namespace
@@ -56,25 +58,49 @@ namespace
   auto&       gAnaMan = AnaManager::GetInstance();
   const auto& gConf   = ConfMan::GetInstance();
 
-  // 0: ch0 only(π+π−n), 1: ch1 only(π−π0p), 2: 1:1 mixture
-  // ConfMan::Get 는 인자 하나만 받으므로 기본값은 설정파일에서 지정해야 함.
-  // 권장: conf에 "Force2PiMode: 2"
-  static const G4int kForce2PiModeRaw = gConf.Get<G4int>("Force2PiMode");
-  static const G4int kForce2PiMode =
-      (kForce2PiModeRaw==0 || kForce2PiModeRaw==1) ? kForce2PiModeRaw : 2;
+  // [REMOVED] 정적 초기화로 conf를 고정시키는 코드는 전부 제거해야 함.
+  // static const G4int kForce2PiModeRaw = gConf.Get<G4int>("Force2PiMode");
+  // static const G4int kForce2PiMode    = (kForce2PiModeRaw==0 || kForce2PiModeRaw==1) ? kForce2PiModeRaw : 2;
+
+  // --------------------------------------------------------------------------
+  // [ADD] 런타임 동적 읽기: 환경변수(FORCE_2PI_MODE) > conf > 기본값(2: mixture)
+  inline G4int GetForce2PiMode()
+  {
+    if(const char* env = std::getenv("FORCE_2PI_MODE")){
+      int v = std::atoi(env);
+      if(v==0 || v==1) return v;
+      return 2;
+    }
+    int raw = 2;
+    try { raw = gConf.Get<G4int>("Force2PiMode"); }
+    catch(...) { raw = 2; }
+    return (raw==0 || raw==1) ? raw : 2;
+  }
+
+  // [ADD] 실행 시작 시 1회만 실제 모드 출력 (A 체크용)
+  inline void PrintForce2PiModeOnce()
+  {
+    static bool s_printOnce = true;
+    if(!s_printOnce) return;
+    const int mode = GetForce2PiMode();
+    G4cout << "[E45] Force2PiMode(read)=" << mode
+#ifdef E45_SCENARIO_FORCE_2PI
+           << "  (SCENARIO_FORCE_2PI=ON)"
+#else
+           << "  (SCENARIO_FORCE_2PI=OFF)"
+#endif
+           << G4endl;
+    s_printOnce = false;
+  }
+  // --------------------------------------------------------------------------
 }
 
+//_____________________________________________________________________________
 SteppingAction::SteppingAction()
   : G4UserSteppingAction()
 {
-  // (옵션) 시작 시 현재 모드 표시
-  // G4cout << "[E45] Force2PiMode = " << kForce2PiMode
-  // #ifdef E45_SCENARIO_FORCE_2PI
-  //        << " (SCENARIO_FORCE_2PI=ON)"
-  // #else
-  //        << " (SCENARIO_FORCE_2PI=OFF)"
-  // #endif
-  //        << G4endl;
+  // [ADD] 생성 시점에 1회 로그 출력해, conf 반영 여부를 눈으로 확인
+  PrintForce2PiModeOnce();
 }
 
 SteppingAction::~SteppingAction()
@@ -111,9 +137,7 @@ namespace {
 
     TGenPhaseSpace gen;
     gen.SetDecay(W, 3, masses);
-
-    // 편향 제거: 1회 Generate()로 샘플링
-    gen.Generate();
+    gen.Generate(); // unbiased single sample
 
     struct Out { const char* name; } outs0[3]={{"pi+"},{"pi-"},{"neutron"}};
     struct Out  outs1[3]={{"pi-"},{"pi0"},{"proton"}};
@@ -163,8 +187,7 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   G4ThreeVector stepMiddlePosition =
       (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
 
-  // [helper] “원빔” 판정자: ParentID==0 && PDG==-211 (primary π−)
-  const bool isPrimaryBeam = (parentID==0 && particlePdg==-211);
+  const bool isPrimaryBeam = (parentID==0 && particlePdg==-211); // primary π−
 
   // --------- (원본 코드) 지표 수집/기존 기능 ---------
   if (prePVName == "TargetPV") {
@@ -284,16 +307,17 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
         {
           const G4ThreeVector vtx = postPoint->GetPosition();
 
-          // ---- 채널 선택: Force2PiMode (0/1/2) ----
+          // ---- [MOD] 채널 선택: "런타임 동적 읽기" ----
+          const int mode = GetForce2PiMode();
           int channel = 0;
-          if      (kForce2PiMode == 0) channel = 0;                              // ch0 only
-          else if (kForce2PiMode == 1) channel = 1;                              // ch1 only
-          else                          channel = (G4UniformRand()<0.5)? 0 : 1;  // 1:1 mixture
+          if      (mode == 0) channel = 0;                              // ch0 only
+          else if (mode == 1) channel = 1;                              // ch1 only
+          else                 channel = (G4UniformRand()<0.5)? 0 : 1;  // 1:1 mixture
 
           auto stackMan = G4EventManager::GetEventManager()->GetStackManager();
           if (stackMan) Spawn3BodyAt(theTrack, channel, vtx, stackMan);
 
-          // (선택) 채널을 트리에 저장하고 싶다면:
+          // (선택) 채널을 트리에 저장하려면 AnaManager에 세터/브랜치 추가 후 활성화
           // gAnaMan.SetChannelID(channel);
 
           theTrack->SetTrackStatus(fStopAndKill); // 원빔 제거
@@ -343,7 +367,6 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   //  - 강제 3체 생성 없음
   //  - VP4 miss-kill / VP4 하드가드 / VP5 fail-safe 없음
   //  - 따라서 원빔(π−, ParentID=0)은 타겟을 통과/산란/흡수 모두 “물리 모델 그대로” 진행
-  //  - 전자/양전자/철 내부 kill 같은 기존 일반 컷은 아래에서 계속 적용
 #endif
 //========================= 커스텀 로직 끝 ==========================
 
