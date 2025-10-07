@@ -90,7 +90,7 @@ const G4double dz = gConf.Get<G4double>("BeamShiftZ_mm") * CLHEP::mm;
      // 오프셋 적용
     beam.pos += G4ThreeVector(dx, dy, dz);
 
-    G4double scale = p0/0.907;
+    G4double scale = p0/0.735;
     beam.mom.set(beam.px * scale, beam.py * scale, beam.pz * scale);
     m_param_array.push_back(beam);
   }

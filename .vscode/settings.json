@@ -106,6 +106,10 @@
         "HTOF_final.C": "cpp",
         "HTOF_2pi.C": "cpp",
         "BH2_Hitpattern.C": "cpp",
-        "ProbeBH2.C": "cpp"
+        "ProbeBH2.C": "cpp",
+        "HTOF_BH2.C": "cpp",
+        "HTOF_check.C": "cpp",
+        "HTOF_2D.C": "cpp",
+        "HTOF_Eff.C": "cpp"
     }
 }
