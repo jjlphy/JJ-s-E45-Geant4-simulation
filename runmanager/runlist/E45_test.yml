@@ -17,7 +17,7 @@ DEFAULT:
   queue: s
   qmerge: s
   nruns: 100
-  unit:  50000
+  unit:  100000
   nproc: 18
   buff:  /ghi/fs02/orig_root_fs02/had/sks/Users/jaejin/buffer
   bin:   bin/G4HypTPC
