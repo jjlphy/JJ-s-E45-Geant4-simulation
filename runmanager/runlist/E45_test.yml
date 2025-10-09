@@ -17,12 +17,12 @@ DEFAULT:
   queue: s
   qmerge: s
   nruns: 100
-  unit:  100000
+  unit:  1000000
   nproc: 18
   buff:  /ghi/fs02/orig_root_fs02/had/sks/Users/jaejin/buffer
   bin:   bin/G4HypTPC
   conf:  param/conf/e72_beam.conf
-  root:  /gpfs/group/had/sks/Users/jaejin/E72geant4/k18geant4/hyptpc_E45/root/rootfile
+  root:  /gpfs/group/had/sks/Users/jaejin/E72geant4/k18geant4/hyptpc_E45/root/rootfile/E45_100M_105_Beamthrough.root
 
 #______________________________________________________________________________
 RUN:
