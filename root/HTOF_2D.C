@@ -6,10 +6,10 @@
 /*root -l
 .L BH2_HTOF_SCH_Multi2.C+
 BH2_HTOF_SCH_Multi2("E45_beamthrough_10_6.root","g4hyptpc","15-20");
-// => E45_beamthrough_10_6_BH2&&SCH_tight_cut.txt / _fit_cut.txt 생성
+// 
 
 BH2_HTOF_SCH_Multi2("E45_piplusn.root","g4hyptpc","15-20");
-// => E45_piplusn_BH2&&SCH_tight_cut.txt / _fit_cut.txt 생성
+// 
 */
 
 #include <TFile.h>

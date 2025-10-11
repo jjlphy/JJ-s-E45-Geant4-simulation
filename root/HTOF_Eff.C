@@ -10,7 +10,7 @@
 // 사용 예:
 //   root -l
 //   .L BH2_SCH_CutEfficiency_DEBUG.C+
-//   BH2_SCH_CutEfficiency_DEBUG("E45_piplusn.root","g4hyptpc","15-20",
+//   BH2_SCH_CutEfficiency_DEBUG("E45_piplusn.root","g4hyptpc","15-20", "./BH2&&SCH_tight_cut.txt","./BH2&&SCH_fit_cut.txt",15,64);
 //                               "./BH2&&SCH_tight_cut.txt","./BH2&&SCH_fit_cut.txt",
 //                               15,64);
 
