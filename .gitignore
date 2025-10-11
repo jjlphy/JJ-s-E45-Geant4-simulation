@@ -1,39 +1,44 @@
-fieldmap/
+# --- Build & binary outputs ---
 .build/
+build/
+cmake-build-*/
 bin/
-**/__pycache__/
-runmanager/module/__pycache__/
-*.pyc
-*.o
-*.obj
-*.pcm
-*.rootmap
-*.so
-*.dylib
-*.a
-*.d
-*.log
-*.tmp
-.DS_Store
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 install_manifest.txt
-module.modulemap
 Makefile
-cmake-build-*/
+module.modulemap
 
-# Ignore build & outputs
-*.root
-*.pcm
+# --- Compiled objects & libs ---
+*.o
+*.obj
+*.a
 *.so
-.build/
-bin/
+*.dylib
+*.d
+
+# --- ROOT / ACLiC artifacts ---
+*_C.so
+*_C.d
+*_C_ACLiC_dict*.*
+*.rootmap
+*.pcm
+*.root
+
+# --- Fieldmaps / generated data ---
 fieldmap/
 
-.build/
-bin/
-*.root
-*.pcm
-*.so
-fieldmap/
+# --- Python trash ---
+**/__pycache__/
+runmanager/module/__pycache__/
+*.pyc
+
+# --- Misc ---
+*.log
+*.tmp
+.DS_Store
+
+# --- Plots/images (원한다면 특정 폴더만) ---
+root/HTOF_10_11/*.png
+
