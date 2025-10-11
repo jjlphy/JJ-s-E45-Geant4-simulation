@@ -110,6 +110,9 @@
         "HTOF_BH2.C": "cpp",
         "HTOF_check.C": "cpp",
         "HTOF_2D.C": "cpp",
-        "HTOF_Eff.C": "cpp"
+        "HTOF_Eff.C": "cpp",
+        "HTOF_HitPat.C": "cpp",
+        "HTOF_2.C": "cpp",
+        "HTOF_HitPat_copynum.C": "cpp"
     }
 }

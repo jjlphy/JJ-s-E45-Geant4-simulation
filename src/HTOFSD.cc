@@ -10,6 +10,7 @@
 
 #include "FuncName.hh"
 #include "HTOFHit.hh"
+#include "TParticle.h"  // TParticle::SetStatusCode 사용
 
 //_____________________________________________________________________________
 HTOFSD::HTOFSD(const G4String& name)
@@ -48,22 +49,18 @@ HTOFSD::ProcessHits(G4Step* aStep, G4TouchableHistory* /* ROhist */)
   if(Definition->GetPDGCharge() == 0.)
     return false;
 
-  // if(particleName == "e-")
-  //   return false;
-  // if(particleName == "e+")
-  //   return false;
-  // if(particleName != "kaon+")
-  //   return false;
-  // if(particleName != "pi-" && particleName != "pi+")
-  //   return false;
-  // if(particleName != "pi+" && particleName != "pi-" &&
-  //     particleName != "proton")
-  //   return false;
-  // if(particleType == "lepton")
-  //   return false;
+  // 히트 생성
+  auto hit = new HTOFHit(SensitiveDetectorName, aStep);
 
-  m_hits_collection->insert(new HTOFHit(SensitiveDetectorName, aStep));
+  // ★ copy_no를 TParticle의 StatusCode에 저장
+  if (const auto touch = preStepPoint->GetTouchable()) {
+    const int copyNo = touch->GetCopyNumber(0);  // 현재 PV의 copy number
+    if (auto tp = hit->GetParticle()) {          // GetParticle()이 TParticle* 반환
+      tp->SetStatusCode(copyNo);
+    }
+  }
 
+  m_hits_collection->insert(hit);
   return true;
 }
 
