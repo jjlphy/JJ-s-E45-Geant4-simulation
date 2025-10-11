@@ -116,6 +116,7 @@
         "HTOF_HitPat_copynum.C": "cpp",
         "HTOF_BH2_2.C": "cpp",
         "HTOF_BH2_Seg.C": "cpp",
-        "HTOF_BH2_summary.C": "cpp"
+        "HTOF_BH2_summary.C": "cpp",
+        "HTOF_BH2_summary_v2.C": "cpp"
     }
 }

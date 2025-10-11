@@ -1,33 +1,8 @@
-// HTOF_BH2_summary.C
-//
+// HTOF_BH2_summary_v2.C  (namespace 격리판)
 // 사용법:
 //   root -l
-//   .L HTOF_BH2_summary.C+
-//   HTOF_BH2_summary("E45.root","g4hyptpc", /*save=*/true);
-//
-// 기능:
-//  <Section1> 전체 BH2 게이트 기준
-//     - 전체 이벤트 수
-//     - BH2 통과 이벤트 수 (전체 대비 %)
-//     - BH2 & HTOF>=1 (전체 대비 %, BH2 대비 %)
-//     - BH2 & HTOF>=2 (전체 대비 %, BH2 대비 %, BH2&HTOF>=1 대비 %)
-//     - BH2 & HTOF==2 (전체 대비 %, BH2 대비 %, BH2&HTOF>=1 대비 %)
-//     - HTOF==2인 이벤트가 (18,19),(19,20),...,(24,25) 어느 페어에 속하는지 요약
-//
-//  <Section2> BH2 세그먼트 3~10에 '하나라도' 닿은 이벤트로 동일 집계/출력
-//  <Section3> BH2 세그먼트 4~9 에 '하나라도' 닿은 이벤트로 동일 집계/출력
-//
-//  히스토그램:
-//    - HTOF 패턴(0..33) 1D: BH2(전체), BH2 seg 3-10, BH2 seg 4-9  → PNG 저장
-//
-// 브랜치 요구:
-//    BH2 : vector<TParticle>   (Vx,Vy,Vz를 사용해서 BH2 세그먼트 매핑)
-//    HTOF_copyNo : vector<int> (있으면 우선 사용)  또는
-//    HTOF : vector<TParticle>  (StatusCode에 0..33 저장되어 있다고 가정)
-//
-// 주의:
-//   - BH2 기하학 가정(E72 스타일): 중심(-10,0,-560)mm, X방향 15세그, pitch=14mm
-//   - 필요하면 kBH2_x0 등 상수는 현 설정에 맞게 수정
+//   .L HTOF_BH2_summary_v2.C+
+//   HTOF_BH2_summary_v2("../rootfile/E45_Beam1.root","g4hyptpc",true);
 
 #include "TFile.h"
 #include "TTree.h"
@@ -45,6 +20,8 @@
 #include <iomanip>
 #include <algorithm>
 
+namespace HBS { // ======== 모든 전역/헬퍼 격리 ========
+
 // ---------------------- geometry assumptions (E72-like) ----------------------
 static const int    kNBH2Seg   = 15;     // 0..14
 static const double kBH2_x0    = -10.0;  // [mm] world center
@@ -52,28 +29,26 @@ static const double kBH2_y0    =   0.0;
 static const double kBH2_z0    = -560.0;
 static const double kBH2_pitch = 14.0;   // [mm]
 static const double kBH2_total = kNBH2Seg * kBH2_pitch; // 210 mm
-// 세그 i 중심 (BH2 local x) = -total/2 + (i+0.5)*pitch (회전 0 가정)
 
 static const int    kNHTOF     = 34;     // tiles 0..33
 
-// vector<TParticle> 사전 준비
-struct _DICT_ {
-  _DICT_(){
+// vector<TParticle> 사전 준비 (고유 이름)
+struct DictGuard_HTOFSUM {
+  DictGuard_HTOFSUM(){
     gSystem->Load("libPhysics");
     gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector");
   }
-} _dict_;
+};
+static DictGuard_HTOFSUM _dict_guard_;
 
 static bool HasBranch(TTree* tr, const char* bname){
   return tr && tr->GetBranch(bname);
 }
 
-// 월드좌표 → BH2 세그 인덱스(0..14), 실패 시 -1
+// 월드좌표 → BH2 세그(0..14), 실패 시 -1
 static int MapBH2_WorldToSeg(double x, double y, double z)
 {
-  // z 근접성 체크를 넣고 싶으면 활성화 (예: |z - kBH2_z0| <= 10 mm)
-  // if (std::fabs(z - kBH2_z0) > 10.0) return -1;
-
+  // if (std::fabs(z - kBH2_z0) > 10.0) return -1; // z근접성 쓰고싶으면 해제
   const double xloc = x - kBH2_x0;           // BH2 중심 기준 x'
   const double xmin = -0.5*kBH2_total;       // -105
   const double xmax =  0.5*kBH2_total;       // +105
@@ -86,10 +61,10 @@ static int MapBH2_WorldToSeg(double x, double y, double z)
   return idx;
 }
 
-// 비율 출력용 헬퍼
+// 비율 계산
 static inline double pct(double num, double den){ return (den>0)? (100.0*num/den):0.0; }
 
-// HTOF==2인 이벤트에서 (i,i+1) 페어 카운팅: i∈{18..24}
+// HTOF==2 페어 집계
 struct PairCount {
   std::map<std::pair<int,int>, long long> counts;
   long long others = 0;
@@ -120,31 +95,23 @@ struct PairCount {
   }
 };
 
-// 집계 박스(조건별로 한 번씩 사용)
+// 집계 컨테이너
 struct StatsBox {
-  // 전역 기준
-  long long N_total = 0;
-
-  // 게이트(조건)에 해당하는 BH2-선택 이벤트 수
-  long long N_BH2sel = 0;
-
-  // HTOF multiplicity 기준
-  long long N_ge1 = 0;
-  long long N_ge2 = 0;
-  long long N_eq2 = 0;
+  long long N_total = 0;   // 전체 이벤트
+  long long N_BH2sel = 0;  // 조건 충족 BH2-선택 이벤트
+  long long N_ge1 = 0;     // HTOF>=1
+  long long N_ge2 = 0;     // HTOF>=2
+  long long N_eq2 = 0;     // HTOF==2
 
   PairCount pairSummary;
 
-  // HTOF 히스토(0..33) : 유니크 타일 기준으로 1 이벤트당 1카운트씩
-  TH1I* hHTOF = nullptr;
+  TH1I* hHTOF = nullptr;   // HTOF 1D 패턴(유니크 타일, 이벤트당 1카운트)
 
-  // 초기화
   void InitHist(const char* hname, const char* htitle){
     hHTOF = new TH1I(hname, htitle, kNHTOF, -0.5, kNHTOF-0.5);
     hHTOF->SetDirectory(nullptr);
   }
 
-  // 결과 출력
   void Print(const char* title){
     std::cout << "\n<" << title << ">\n";
     std::cout << "  Total events                            : " << N_total << "\n";
@@ -169,7 +136,6 @@ struct StatsBox {
   }
 };
 
-// BH2 세그 집합이 [lo..hi] 와 교집합이 있는지
 static bool BH2HitsInRange(const std::set<int>& bh2Seg, int lo, int hi){
   for(int s : bh2Seg){
     if(lo <= s && s <= hi) return true;
@@ -177,10 +143,15 @@ static bool BH2HitsInRange(const std::set<int>& bh2Seg, int lo, int hi){
   return false;
 }
 
-void HTOF_BH2_summary(const char* filename="E45.root",
-                       const char* treename="g4hyptpc",
-                       bool save=true)
+} // namespace HBS
+
+// ======== 공개 함수 (이름도 v2로 변경) ========
+void HTOF_BH2_summary_v2(const char* filename="E45.root",
+                         const char* treename="g4hyptpc",
+                         bool save=true)
 {
+  using namespace HBS;
+
   // 파일/트리
   TFile* f = TFile::Open(filename,"READ");
   if(!f || f->IsZombie()){ std::cerr<<"[ERR] open "<<filename<<" failed\n"; return; }
@@ -191,7 +162,6 @@ void HTOF_BH2_summary(const char* filename="E45.root",
   if(!HasBranch(T,"BH2")){ std::cerr<<"[ERR] need branch 'BH2' (vector<TParticle>)\n"; return; }
   const bool hasHTOFvec  = HasBranch(T,"HTOF");
   const bool hasHTOFcopy = HasBranch(T,"HTOF_copyNo");
-
   if(!(hasHTOFvec || hasHTOFcopy)){
     std::cerr<<"[ERR] need 'HTOF' (vector<TParticle>) or 'HTOF_copyNo' (vector<int>)\n";
     return;
@@ -253,7 +223,6 @@ void HTOF_BH2_summary(const char* filename="E45.root",
         S1.N_eq2++;
         S1.pairSummary.Fill(htofSeg);
       }
-      // HTOF 히스토그램(유니크 타일당 1카운트)
       for(int t : htofSeg) S1.hHTOF->Fill(t);
     }
 
