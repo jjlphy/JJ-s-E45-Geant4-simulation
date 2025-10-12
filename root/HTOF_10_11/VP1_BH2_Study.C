@@ -25,6 +25,9 @@
 #include <vector>
 #include <iostream>
 #include <cassert>
+#include <TSystem.h>
+#include <TInterpreter.h>
+
 
 namespace {
   // --------- 설정값 ----------
@@ -150,6 +153,11 @@ void VP1_BH2_Study(const char* fname="../E45_VPHTOF_098.root",
                    bool savePNG=true)
 {
   gStyle->SetOptStat(0);
+
+// 딕셔너리 준비: TParticle (libEG) + vector<TParticle>
+gSystem->Load("libEG");
+gInterpreter->GenerateDictionary("vector<TParticle>", "TParticle.h;vector");
+gSystem->ProcessEvents(); // (안전빵) 인터프리터 갱신
 
   // 파일/트리 열기
   TFile* f = TFile::Open(fname,"READ");
