@@ -1,14 +1,10 @@
-// HTOF_BH2_summary_v2.C  (구간 가변판: "4-9,4-11,3-8" 같은 문자열로 지정)
+// HTOF_BH2_summary_v2.C  (구간 가변판 + 0.1 MIP 에너지 컷 옵션)
 // 사용법:
 //   root -l
 //   .L HTOF_BH2_summary_v2.C+
-//   HTOF_BH2_summary_v2("../rootfile/E45_Beam1.root","g4hyptpc","4-9,4-11,3-8",true);
-//
-// 설명:
-//   - Section1은 항상 "BH2(any)"로 집계
-//   - ranges 문자열에 적은 각 구간(예: 4-9)을 Section2,3,... 로 자동 생성
-//   - 각 섹션에 대해 HTOF 1D 패턴, HTOF==2 인접 페어 히스토그램(i-(i+1)) 생성
-//   - 콘솔에는 각 섹션의 카운트/퍼센트와 (18..24) 특수 페어 + others 요약 출력
+//   HTOF_BH2_summary_v2("../rootfile/E45_Beam1.root","g4hyptpc","3-11,4-9",true);
+//   // 옵션 파라미터: mipFrac, mipMeVperCm, BH2_thick_mm, HTOF_thick_mm
+//   // 예) 0.15 MIP로 바꾸려면 마지막 인자를 0.15로 바꿔도 됨 (순서는 아래 시그니처 참조)
 
 #include "TFile.h"
 #include "TTree.h"
@@ -31,7 +27,6 @@
 
 namespace HBS { // ======== 모든 전역/헬퍼 격리 ========
 
-// ---------------------- geometry assumptions (E72-like) ----------------------
 static const int    kNBH2Seg   = 15;     // 0..14
 static const double kBH2_x0    = -10.0;  // [mm] world center
 static const double kBH2_y0    =   0.0;
@@ -41,7 +36,7 @@ static const double kBH2_total = kNBH2Seg * kBH2_pitch; // 210 mm
 
 static const int    kNHTOF     = 34;     // tiles 0..33
 
-// vector<TParticle> 사전 준비 (고유 이름)
+// vector<TParticle> 사전 준비
 struct DictGuard_HTOFSUM {
   DictGuard_HTOFSUM(){
     gSystem->Load("libPhysics");
@@ -69,7 +64,6 @@ static int MapBH2_WorldToSeg(double x, double y, double z)
   return idx;
 }
 
-// 비율 계산
 static inline double pct(double num, double den){ return (den>0)? (100.0*num/den):0.0; }
 
 // HTOF==2 페어 집계 (특수 7페어 + others)
@@ -106,16 +100,16 @@ struct PairCount {
 
 // 집계 컨테이너
 struct StatsBox {
-  long long N_total = 0;   // 전체 이벤트
-  long long N_BH2sel = 0;  // 조건 충족 BH2-선택 이벤트
-  long long N_ge1 = 0;     // HTOF>=1
-  long long N_ge2 = 0;     // HTOF>=2
-  long long N_eq2 = 0;     // HTOF==2
+  long long N_total = 0;
+  long long N_BH2sel = 0;
+  long long N_ge1 = 0;
+  long long N_ge2 = 0;
+  long long N_eq2 = 0;
 
   PairCount pairSummary;
 
-  TH1I* hHTOF = nullptr;        // HTOF 1D 패턴(유니크 타일)
-  TH1I* hPairAdj = nullptr;     // 인접 페어 34개 (i,i+1), i=0..33(33→0)
+  TH1I* hHTOF = nullptr;
+  TH1I* hPairAdj = nullptr;
 
   void InitHist(const TString& key, const TString& title){
     hHTOF = new TH1I(key, title, kNHTOF, -0.5, kNHTOF-0.5);
@@ -140,8 +134,6 @@ struct StatsBox {
       hPairAdj->Fill(a);
     }else if(a==0 && b==(kNHTOF-1)){
       hPairAdj->Fill(kNHTOF-1);
-    }else{
-      // 비인접 조합은 스킵 (others는 PairCount에서 집계)
     }
   }
 
@@ -178,7 +170,7 @@ static bool BH2HitsInRange(const std::set<int>& bh2Seg, int lo, int hi){
 
 // ===== 섹션 스펙과 파서 =====
 struct SectionSpec {
-  bool isAny = false; // true면 BH2(any)
+  bool isAny = false;
   int  lo = 0;
   int  hi = 0;
   TString tag;   // "BH2(any)" 또는 "BH2 seg lo-hi"
@@ -192,7 +184,6 @@ static inline TString TrimWS(const TString& s){
 // "4-9,4-11,3-8" → { (4,9), (4,11), (3,8) }
 static std::vector<SectionSpec> ParseRanges(const char* rangesCSV){
   std::vector<SectionSpec> out;
-  // 항상 Section1: any
   SectionSpec any; any.isAny=true; any.tag="BH2(any seg)"; any.key="BH2_any";
   out.push_back(any);
 
@@ -210,7 +201,6 @@ static std::vector<SectionSpec> ParseRanges(const char* rangesCSV){
     tok = TrimWS(tok);
     if(tok.Length()==0) continue;
 
-    // 허용 형식: "a-b"
     Ssiz_t dash = tok.Index("-");
     if(dash==kNPOS){ std::cerr<<"[WARN] bad range token: "<<tok<<"\n"; continue; }
     TString A = tok(0, dash);
@@ -234,13 +224,22 @@ static std::vector<SectionSpec> ParseRanges(const char* rangesCSV){
   return out;
 }
 
+// ===== 유틸: edep 임계값 계산 (MeV) =====
+static inline double MIPThresholdMeV(double mipFrac, double mipMeVperCm, double thickness_mm){
+  return mipFrac * mipMeVperCm * (thickness_mm*0.1); // mm→cm
+}
+
 } // namespace HBS
 
 // ======== 공개 함수 ========
 void HTOF_BH2_summary_v2(const char* filename="E45.root",
                          const char* treename="g4hyptpc",
                          const char* ranges="4-9,4-11,3-8",
-                         bool save=true)
+                         bool save=true,
+                         double mipFrac=0.1,
+                         double mipMeVperCm=2.0,
+                         double BH2_thickness_mm=5.0,
+                         double HTOF_thickness_mm=10.0)
 {
   using namespace HBS;
 
@@ -259,19 +258,41 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
     return;
   }
 
+  // 에너지 브랜치 탐지
+  const bool hasBH2edep = HasBranch(T,"BH2_edep");
+  const bool hasHTOFedep = HasBranch(T,"HTOF_edep");
+
   // 브랜치 포인터
   std::vector<TParticle>* BH2 = nullptr;
   std::vector<TParticle>* HTOF = nullptr;
   std::vector<int>* HTOF_copyNo = nullptr;
+  std::vector<double>* BH2_edep = nullptr;
+  std::vector<double>* HTOF_edep = nullptr;
 
   T->SetBranchAddress("BH2",&BH2);
   if(hasHTOFvec)  T->SetBranchAddress("HTOF",&HTOF);
   if(hasHTOFcopy) T->SetBranchAddress("HTOF_copyNo",&HTOF_copyNo);
+  if(hasBH2edep)  T->SetBranchAddress("BH2_edep",&BH2_edep);
+  if(hasHTOFedep) T->SetBranchAddress("HTOF_edep",&HTOF_edep);
 
-  // ===== 섹션 스펙 구성 (Section1은 always any, 이후는 ranges 문자열 기반) =====
+  // 컷 값(MeV)
+  const double thrBH2  = MIPThresholdMeV(mipFrac, mipMeVperCm, BH2_thickness_mm);   // 기본 0.10 MeV
+  const double thrHTOF = MIPThresholdMeV(mipFrac, mipMeVperCm, HTOF_thickness_mm);  // 기본 0.20 MeV
+
+  std::cout<<std::fixed<<std::setprecision(3);
+  std::cout<<"[INFO] Energy cuts: mipFrac="<<mipFrac
+           <<", dE/dx="<<mipMeVperCm<<" MeV/cm"
+           <<", BH2_th="<<BH2_thickness_mm<<" mm (thr="<<thrBH2<<" MeV)"
+           <<", HTOF_th="<<HTOF_thickness_mm<<" mm (thr="<<thrHTOF<<" MeV)\n";
+  if(!(hasBH2edep || hasHTOFedep)){
+    std::cout<<"[WARN] No *edep branches found. Will use TParticle::Energy() as edep. "
+                "If neither is valid, energy cut effectively disabled.\n";
+  }
+
+  // 섹션 스펙
   std::vector<SectionSpec> specs = ParseRanges(ranges);
 
-  // 섹션 별 StatsBox 및 히스토 준비
+  // 섹션 런 박스
   struct SectionRun {
     SectionSpec spec;
     StatsBox box;
@@ -285,24 +306,16 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
     const auto& sp = specs[i];
     SectionRun r; r.spec = sp;
 
-    // HTOF 1D 히스토
     TString hname, htitle;
     hname.Form("hHTOF_%s", sp.key.Data());
-    if(sp.isAny){
-      htitle = "HTOF pattern | BH2(any seg);HTOF tile;Events";
-    }else{
-      htitle.Form("HTOF pattern | %s;HTOF tile;Events", sp.tag.Data());
-    }
+    if(sp.isAny) htitle = "HTOF pattern | BH2(any seg);HTOF tile;Events";
+    else         htitle.Form("HTOF pattern | %s;HTOF tile;Events", sp.tag.Data());
     r.box.InitHist(hname, htitle);
 
-    // 인접 페어 히스토 (모든 섹션에 대해 생성)
     TString hp, tp;
     hp.Form("hPairs_%s", sp.key.Data());
-    if(sp.isAny){
-      tp = "Adjacent HTOF pairs (i-(i+1)) | BH2(any seg);pair;Events";
-    }else{
-      tp.Form("Adjacent HTOF pairs (i-(i+1)) | %s;pair;Events", sp.tag.Data());
-    }
+    if(sp.isAny) tp = "Adjacent HTOF pairs (i-(i+1)) | BH2(any seg);pair;Events";
+    else         tp.Form("Adjacent HTOF pairs (i-(i+1)) | %s;pair;Events", sp.tag.Data());
     r.box.InitPairHist(hp, tp);
 
     runs.push_back(r);
@@ -312,32 +325,76 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
   const Long64_t N = T->GetEntries();
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie);
-    // 모든 섹션의 N_total 동시 증가
     for(auto& r : runs) r.box.N_total++;
 
-    // (1) BH2 세그 집합
-    std::set<int> bh2Seg;
+    // (1) BH2 세그별 누적 에너지 및 유효 세그 집합
+    std::map<int,double> bh2E;
     if(BH2){
+      // 만약 edep 브랜치가 있으면 같은 index로 매칭된다고 가정
+      for(size_t i=0; i<BH2->size(); ++i){
+        const TParticle& p = BH2->at(i);
+        const double edep = (hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i) : p.Energy();
+        int s = MapBH2_WorldToSeg(p.Vx(), p.Vy(), p.Vz());
+        if(0 <= s && s < kNBH2Seg){
+          bh2E[s] += edep;
+        }
+      }
+    }
+    std::set<int> bh2Seg_valid;
+    for(const auto& kv : bh2E){
+      if(kv.second >= thrBH2) bh2Seg_valid.insert(kv.first);
+    }
+    // edep 정보가 전혀 없어서 모두 0이면, 과거 동작과의 호환을 위해 "히트가 있었던 세그"를 통과로 대체
+    if(bh2E.empty() && BH2 && !BH2->empty()){
+      std::set<int> anySeg;
       for(const auto& p : *BH2){
         int s = MapBH2_WorldToSeg(p.Vx(), p.Vy(), p.Vz());
-        if(0 <= s && s < kNBH2Seg) bh2Seg.insert(s);
+        if(0 <= s && s < kNBH2Seg) anySeg.insert(s);
       }
+      bh2Seg_valid = anySeg; // no-cut fallback
     }
-    const bool passBH2_any = !bh2Seg.empty();
+    const bool passBH2_any = !bh2Seg_valid.empty();
 
-    // (2) HTOF 세그 집합 (유니크)
-    std::set<int> htofSeg;
+    // (2) HTOF 타일별 누적 에너지 및 유효 타일 집합
+    std::map<int,double> htofE;
     if(hasHTOFcopy && HTOF_copyNo){
-      for(int cn : *HTOF_copyNo){
-        if(0 <= cn && cn < kNHTOF) htofSeg.insert(cn);
+      // copyNo와 edep vector가 1:1 매칭되리라 가정
+      const size_t n = HTOF_copyNo->size();
+      for(size_t i=0; i<n; ++i){
+        int cn = HTOF_copyNo->at(i);
+        if(0 <= cn && cn < kNHTOF){
+          double edep = 0.0;
+          if(hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) edep = HTOF_edep->at(i);
+          else if(hasHTOFvec && HTOF && i<HTOF->size())       edep = HTOF->at(i).Energy();
+          htofE[cn] += edep;
+        }
       }
     }else if(hasHTOFvec && HTOF){
-      for(const auto& p : *HTOF){
+      for(size_t i=0; i<HTOF->size(); ++i){
+        const TParticle& p = HTOF->at(i);
         int cn = p.GetStatusCode(); // 0..33
-        if(0 <= cn && cn < kNHTOF) htofSeg.insert(cn);
+        if(0 <= cn && cn < kNHTOF){
+          const double edep = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i) : p.Energy();
+          htofE[cn] += edep;
+        }
       }
     }
-    const int htMult = (int)htofSeg.size();
+    std::set<int> htofSeg_valid;
+    for(const auto& kv : htofE){
+      if(kv.second >= thrHTOF) htofSeg_valid.insert(kv.first);
+    }
+    // edep 정보가 없어 모두 0이면, 과거 동작과 동일하게 "히트가 있던 타일"을 통과로 대체
+    if(htofE.empty()){
+      if(hasHTOFcopy && HTOF_copyNo){
+        for(int cn : *HTOF_copyNo) if(0<=cn && cn<kNHTOF) htofSeg_valid.insert(cn);
+      }else if(hasHTOFvec && HTOF){
+        for(const auto& p : *HTOF){
+          int cn = p.GetStatusCode();
+          if(0<=cn && cn<kNHTOF) htofSeg_valid.insert(cn);
+        }
+      }
+    }
+    const int htMult = (int)htofSeg_valid.size();
 
     // 섹션별 집계
     for(auto& r : runs){
@@ -345,7 +402,7 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
       if(r.spec.isAny){
         passBH2 = passBH2_any;
       }else{
-        passBH2 = BH2HitsInRange(bh2Seg, r.spec.lo, r.spec.hi);
+        passBH2 = BH2HitsInRange(bh2Seg_valid, r.spec.lo, r.spec.hi);
       }
 
       if(passBH2){
@@ -354,10 +411,10 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
         if(htMult>=2) r.box.N_ge2++;
         if(htMult==2){
           r.box.N_eq2++;
-          r.box.pairSummary.Fill(htofSeg);
-          r.box.FillPairHistIfAdjacent(htofSeg);
+          r.box.pairSummary.Fill(htofSeg_valid);
+          r.box.FillPairHistIfAdjacent(htofSeg_valid);
         }
-        for(int t : htofSeg) r.box.hHTOF->Fill(t);
+        for(int t : htofSeg_valid) r.box.hHTOF->Fill(t);
       }
     }
   }
@@ -368,12 +425,10 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
     TString title = r.spec.tag.Length()? r.spec.tag : "BH2(any seg)";
     r.box.Print(title);
 
-    // 1D 패턴
     TString cname1; cname1.Form("cHTOF_%s", r.spec.key.Data());
     r.cHTOF = new TCanvas(cname1, title, 800, 600);
     r.box.hHTOF->Draw("hist");
 
-    // 인접 페어
     TString cname2; cname2.Form("cPairs_%s", r.spec.key.Data());
     r.cPair = new TCanvas(cname2, TString("Adjacent pairs | ")+title, 900, 600);
     r.box.hPairAdj->LabelsOption("v","X");
