@@ -1,12 +1,11 @@
-// VP1_BH2_Study.C  (ROOT 6.32 호환: TTimer::SingleShot 사용 안 함)
-// - BH2 세그 구간을 인자로 지정(segLo, segHi) → 4–9, 3–10, 4–10 등 쉽게 변경
+// VP1_BH2_Study.C  (방법 A: gROOT->cd() 적용판)
+// - 히스토그램 생성 직전 gROOT->cd()로 소유권을 ROOT로 이동(파일 닫아도 안 사라짐)
+// - BH2 세그 구간을 인자로 지정(segLo, segHi) → 4–9, 3–10, 4–10 등
 // - macOS/화면 비표시 이슈 회피: GL painter 끄고 강제 Update
 // - 좌표가 로컬일 수 있어 BH2/KVC/HTOF는 로컬→글로벌 보정 후 사용
 // - VP 브랜치가 없거나 맞지 않아도 BH2↔(KVC 우선, 없으면 HTOF) 직선으로
 //   Z = VP1_Z 에서의 교점(x,y)을 투영해 VP1 분포를 채움
 // - PNG 저장은 기본 끔
-
-              
 
 #include <TFile.h>
 #include <TTree.h>
@@ -24,7 +23,7 @@
 #include <cmath>
 #include <iostream>
 
-namespace V7F {
+namespace V7A {
 
 // ====== 기하 상수(글로벌, mm) ======
 struct Ctr { double x,y,z; };
@@ -47,7 +46,7 @@ constexpr double BoxHX = BoxW*0.5, BoxHY = BoxH*0.5;
 
 // 히스토 범위
 constexpr int    Nbin = 200;
-constexpr double Xmin=-100, Xmax=100, Ymin=-100, Ymax=100;
+constexpr double Xmin=-500, Xmax=500, Ymin=-500, Ymax=500;
 
 inline bool looksLocalZ(double z_local, double z_center){
   // 로컬이면 z≈0, 글로벌이면 ≈ 중심 z
@@ -124,7 +123,7 @@ inline void forceRefresh(){
   gSystem->Sleep(80);
 }
 
-} // namespace V7F
+} // namespace V7A
 
 
 void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
@@ -133,7 +132,7 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
                    double VP1_Z=-337.0,          // VP1 평면 Z (필요시 변경)
                    bool savePNG=false)           // PNG 저장 여부(기본 끔)
 {
-  using namespace V7F;
+  using namespace V7A;
 
   // 렌더러/배치 설정: 창 비표시 이슈 회피
   gROOT->SetBatch(kFALSE);
@@ -171,7 +170,9 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
            <<(hasHTOF?"Y":"N")<<"/"<<(hasVP?"Y":"N")<<")\n";
   std::cout<<"[INFO] BH2 segment window = ["<<segLo<<","<<segHi<<"] (inclusive)\n";
 
-  // 히스토
+  // ===== 핵심: 파일 디렉터리에서 나오고(ROOT 소속으로) 히스토 생성 =====
+  gROOT->cd();  // ★ 방법 A — 히스토그램이 TFile에 귀속되지 않도록
+
   TH2F* hVP1_all  = new TH2F("hVP1_all","VP1 XY (all; projected/globalized);X [mm];Y [mm]",
                               Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
   TH2F* hVP1_sel  = new TH2F("hVP1_sel","VP1 XY (BH2 selected; projected/globalized);X [mm];Y [mm]",
@@ -211,7 +212,7 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
 
         if(flagged_any && flagged_win && f310 && f49) break;
       }
-      if(f310) ++nBH2_3to10;     // 전체 이벤트 대비 통계
+      if(f310) ++nBH2_3to10;
       if(f49)  ++nBH2_4to9;
     }
 
@@ -219,7 +220,6 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
     bool filled_all=false, filled_sel=false;
     if(VP && !VP->empty()){
       for(const auto& p: *VP){
-        // 보통 VP는 글로벌 저장 → 그대로 사용, z만 확인
         const double x=p.Vx(), y=p.Vy(), z=p.Vz();
         if(std::fabs(z - VP1_Z) > 5.0) continue;
         hVP1_all->Fill(x,y); vp1_any=true; filled_all=true;
@@ -293,6 +293,6 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
   hBH2_xy->Draw("COLZ"); drawBH2Overlay(); forceRefresh();
   if(savePNG) c3->SaveAs("BH2_xy_with_segments.png");
 
-  f->Close();
+  f->Close(); // 히스토는 ROOT 소속이라 안전
   std::cout<<"[DONE]\n";
 }
