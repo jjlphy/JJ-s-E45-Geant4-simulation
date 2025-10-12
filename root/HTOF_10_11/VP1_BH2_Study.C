@@ -1,8 +1,10 @@
-// VP1_BH2_Study_v4.C
-//  - PNG 저장 기본 끔
-//  - 캔버스 강제 업데이트
-//  - VP1 판정: seg==1/1001 OR |z - (-337)| < zTol (2→10→50mm 단계적 폴백)
-//  - BH2 세그: X좌표(폭14mm, 15분할, 중심X=-10mm)로 역추정
+// VP1_BH2_Study_v7.C
+// - BH2 세그 구간을 함수 인자로 지정(segLo, segHi).
+// - macOS/ROOT 창 비표시 문제 회피: GL 페인터 off + 강제 Update.
+// - 좌표 저장이 로컬일 수 있어 BH2/KVC/HTOF는 로컬→글로벌 보정 후 사용.
+// - VP 브랜치가 없거나 맞지 않아도 BH2↔(KVC 우선, 없으면 HTOF)로 직선을 만들고
+//   Z = VP1_Z 에서의 교점(x,y)을 투영해 VP1 분포를 채움.
+// - PNG 저장은 기본 끔.
 
 #include <TFile.h>
 #include <TTree.h>
@@ -13,62 +15,88 @@
 #include <TLine.h>
 #include <TLatex.h>
 #include <TStyle.h>
+#include <TROOT.h>
 #include <TSystem.h>
+#include <TApplication.h>
+#include <TTimer.h>
 #include <TInterpreter.h>
 #include <vector>
 #include <cmath>
 #include <iostream>
-#include <limits>
 
-namespace V4 {
+namespace V7 {
 
-// ===== 설정 =====
-constexpr double BoxCx = 0.0;     // mm
-constexpr double BoxCy = 12.0;    // mm
-constexpr double BoxW  = 136.0;   // mm
-constexpr double BoxH  = 112.0;   // mm
-constexpr double BoxHX = BoxW*0.5;
-constexpr double BoxHY = BoxH*0.5;
+// ====== 기하 상수(글로벌, mm) ======
+struct Ctr { double x,y,z; };
+constexpr Ctr C_BH2  = {-10.0,  0.0, -560.0};  // DCGeomParam_E72_0 기준
+constexpr Ctr C_HTOF = {  0.0, 12.0,    0.0};
+constexpr Ctr C_KVC  = {160.0,  0.0,  600.0};
 
-constexpr int    BH2_NSEG = 15;   // 0..14
-constexpr double BH2_W    = 14.0; // mm
-constexpr double BH2_Xc   = -10.0;
-constexpr double BH2_Ymin = -100.0, BH2_Ymax=100.0;
+// BH2 세그 정의(글로벌 X)
+constexpr int    BH2_NSEG = 15;
+constexpr double BH2_W    = 14.0;              // seg width
+constexpr double BH2_Xc   = -10.0;             // BH2 center X
+constexpr double BH2_Ymin = -100.0, BH2_Ymax = 100.0;
 
-constexpr double VP1_Z    = -337.0; // mm
+// 오버레이 박스 (요청치)
+constexpr double BoxCx = 0.0;                  // mm
+constexpr double BoxCy = 12.0;
+constexpr double BoxW  = 136.0;
+constexpr double BoxH  = 112.0;
+constexpr double BoxHX = BoxW*0.5, BoxHY = BoxH*0.5;
 
+// 히스토 범위
 constexpr int    Nbin = 200;
 constexpr double Xmin=-100, Xmax=100, Ymin=-100, Ymax=100;
 
-inline int getSegId(const TParticle& p){
-  int sc = p.GetStatusCode();
-  if(sc>=0 && sc<100000) return sc;
-  int fm = p.GetFirstMother();
-  if(fm>=0 && fm<100000) return fm;
-  return static_cast<int>(std::lround(p.Px()));
+inline bool looksLocalZ(double z_local, double z_center){
+  // 로컬이면 z≈0, 글로벌이면 ≈ 중심 z
+  return (std::fabs(z_local) < 80.0 && std::fabs(z_local - z_center) > 120.0);
+}
+inline void toGlobal(const TParticle& p, const Ctr& C,
+                     double& xg,double& yg,double& zg, bool& usedLocal)
+{
+  if(looksLocalZ(p.Vz(), C.z)){
+    xg = p.Vx()+C.x; yg = p.Vy()+C.y; zg = p.Vz()+C.z; usedLocal=true;
+  }else{
+    xg = p.Vx();     yg = p.Vy();     zg = p.Vz();     usedLocal=false;
+  }
 }
 
-inline int BH2_seg_fromX(double x){
-  const double totalW = BH2_NSEG*BH2_W;
-  const double x0 = BH2_Xc - 0.5*totalW;
-  int seg = static_cast<int>(std::floor((x - x0)/BH2_W));
+inline int BH2_seg_fromX(double xg){
+  const double tot = BH2_NSEG*BH2_W;
+  const double x0  = BH2_Xc - 0.5*tot;    // 왼쪽 끝
+  int seg = (int)std::floor((xg - x0)/BH2_W);
   if(seg<0) seg=0; if(seg>=BH2_NSEG) seg=BH2_NSEG-1;
   return seg;
 }
 
-inline void drawBox(){
-  auto box=new TBox(BoxCx-BoxHX,BoxCy-BoxHY,BoxCx+BoxHX,BoxCy+BoxHY);
-  box->SetFillStyle(0); box->SetLineColor(kRed+1); box->SetLineWidth(3); box->Draw("same");
+inline bool lineIntersectAtZ(double x0,double y0,double z0,
+                             double x1,double y1,double z1,
+                             double Zgoal, double& xi,double& yi)
+{
+  const double dz = z1 - z0;
+  if(std::fabs(dz) < 1e-6) return false;
+  const double t = (Zgoal - z0)/dz;
+  if(t < -0.5 || t > 1.5) return false;   // 과도한 외삽 방지
+  xi = x0 + t*(x1 - x0);
+  yi = y0 + t*(y1 - y0);
+  return true;
 }
 
+// Draw helpers
+inline void drawBox(){
+  auto box=new TBox(BoxCx-BoxHX, BoxCy-BoxHY, BoxCx+BoxHX, BoxCy+BoxHY);
+  box->SetFillStyle(0); box->SetLineColor(kRed+1); box->SetLineWidth(3); box->Draw("same");
+}
 inline void drawBH2Overlay(){
-  const double totalW = BH2_NSEG*BH2_W;
-  double x = BH2_Xc - 0.5*totalW;
+  const double tot = BH2_NSEG*BH2_W;
+  double x = BH2_Xc - 0.5*tot;
   std::vector<double> centers; centers.reserve(BH2_NSEG);
   for(int i=0;i<=BH2_NSEG;i++){
     auto ln=new TLine(x,BH2_Ymin,x,BH2_Ymax);
     ln->SetLineColor(kGray+2); ln->SetLineStyle(3); ln->Draw("same");
-    if(i<BH2_NSEG){ centers.push_back(x+0.5*BH2_W); }
+    if(i<BH2_NSEG) centers.push_back(x+0.5*BH2_W);
     x += BH2_W;
   }
   TLatex tx; tx.SetTextSize(0.02);
@@ -90,16 +118,29 @@ inline void countInOut(const TH2* h,double xmin,double xmax,double ymin,double y
   }
 }
 
-} // namespace V4
+inline void forceRefresh(){
+  gPad->Modified(); gPad->Update();
+  gSystem->ProcessEvents();
+  gSystem->Sleep(50);
+  TTimer::SingleShot(150, "gPad->Modified(); gPad->Update();");
+}
+
+} // namespace V7
+
 
 void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
                    const char* treeName="g4hyptpc",
-                   bool savePNG=false)  // 기본: PNG 저장 안 함
+                   int segLo=4, int segHi=9,     // ★ BH2 세그 구간 인자
+                   double VP1_Z=-337.0,          // VP1 평면 Z (필요시 변경)
+                   bool savePNG=false)           // PNG 저장 여부(기본 끔)
 {
-  using namespace V4;
-  gStyle->SetOptStat(0);
+  using namespace V7;
 
-  // vector<TParticle> 딕셔너리
+  // 렌더러/배치 설정: macOS 창 비표시 이슈 회피
+  gROOT->SetBatch(kFALSE);
+  gStyle->SetCanvasPreferGL(kFALSE);
+
+  // 딕셔너리
   gSystem->Load("libEG");
   gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector");
 
@@ -109,129 +150,149 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
   TTree* tr = dynamic_cast<TTree*>(f->Get(treeName));
   if(!tr){ std::cerr<<"[ERR] tree "<<treeName<<" not found\n"; f->Close(); return; }
 
-  std::vector<TParticle>* BH2=nullptr;
-  std::vector<TParticle>* VP=nullptr;
+  // 브랜치
+  std::vector<TParticle>* BH2 = nullptr;
+  std::vector<TParticle>* KVC = nullptr;
+  std::vector<TParticle>* HTOF= nullptr;
+  std::vector<TParticle>* VP  = nullptr;
 
   bool hasBH2 = tr->GetBranch("BH2");
+  bool hasKVC = tr->GetBranch("KVC");
+  bool hasHTOF= tr->GetBranch("HTOF");
   bool hasVP  = tr->GetBranch("VP");
 
-  if(hasBH2) tr->SetBranchAddress("BH2",&BH2); else std::cerr<<"[WRN] no 'BH2' branch\n";
-  if(hasVP ) tr->SetBranchAddress("VP" ,&VP ); else std::cerr<<"[WRN] no 'VP'  branch\n";
+  if(hasBH2) tr->SetBranchAddress("BH2",&BH2); else std::cerr<<"[WRN] no 'BH2'\n";
+  if(hasKVC) tr->SetBranchAddress("KVC",&KVC);
+  if(hasHTOF)tr->SetBranchAddress("HTOF",&HTOF);
+  if(hasVP ) tr->SetBranchAddress("VP" ,&VP );
 
   const Long64_t N = tr->GetEntries();
-  std::cout<<"[INFO] Entries = "<<N<<"\n";
+  std::cout<<"[INFO] Entries="<<N<<"  (BH2/KVC/HTOF/VP="
+           <<(hasBH2?"Y":"N")<<"/"<<(hasKVC?"Y":"N")<<"/"
+           <<(hasHTOF?"Y":"N")<<"/"<<(hasVP?"Y":"N")<<")\n";
+  std::cout<<"[INFO] BH2 segment window = ["<<segLo<<","<<segHi<<"] (inclusive)\n";
 
-  // 히스토그램
-  TH2F* hVP1_all  = new TH2F("hVP1_all","VP1 XY (all);X [mm];Y [mm]", Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
-  TH2F* hVP1_bh49 = new TH2F("hVP1_bh49","VP1 XY (BH2 seg4-9);X [mm];Y [mm]", Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
-  TH2F* hBH2_xy   = new TH2F("hBH2_xy","BH2 XY;X [mm];Y [mm]", Nbin,-150,150, Nbin,-100,100);
+  // 히스토
+  TH2F* hVP1_all  = new TH2F("hVP1_all","VP1 XY (all; projected/globalized);X [mm];Y [mm]",
+                              Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
+  TH2F* hVP1_sel  = new TH2F("hVP1_sel","VP1 XY (BH2 sel; projected/globalized);X [mm];Y [mm]",
+                              Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
+  TH2F* hBH2_xy   = new TH2F("hBH2_xy","BH2 XY (globalized);X [mm];Y [mm]",
+                              Nbin,-150,150, Nbin,-100,100);
 
-  // 디버그용 Z 분포( VP1 판정 보조 )
-  double vpZmin=+std::numeric_limits<double>::infinity();
-  double vpZmax=-std::numeric_limits<double>::infinity();
-
-  Long64_t nBH2_any=0, nBH2_3to10=0, nBH2_4to9=0, nBH2_4to9_AND_VP1=0;
+  // 카운트
+  Long64_t nBH2_any=0, nBH2_win=0, nBH2_3to10=0, nBH2_4to9=0, nBH2_win_AND_VP1=0;
+  Long64_t nProjOK=0, nVPbranchUsed=0;
 
   for(Long64_t i=0;i<N;++i){
     tr->GetEntry(i);
 
-    bool bh2_any=false, bh2_3to10=false, bh2_4to9=false;
+    bool bh2_any=false, bh2_inwin=false;
     bool vp1_any=false;
 
-    // BH2: 좌표→세그
-    if(BH2){
-      bool fa=false,f310=false,f49=false;
+    // ---- BH2 ----
+    const TParticle* bh2_first = nullptr;
+    double bxg=0,byg=0,bzg=0; bool ul=false;
+    if(BH2 && !BH2->empty()){
+      bh2_first = &(*BH2)[0];
+      toGlobal(*bh2_first, C_BH2, bxg,byg,bzg, ul);
+
+      bool flagged_any=false, flagged_win=false;
+      bool f310=false, f49=false; // 통계용
       for(const auto& p: *BH2){
-        const double x=p.Vx(), y=p.Vy();
-        hBH2_xy->Fill(x,y);
-        int seg = BH2_seg_fromX(x);
-        if(!fa){ bh2_any=true; fa=true; }
-        if(!f310 && (seg>=3 && seg<=10)){ bh2_3to10=true; f310=true; }
-        if(!f49  && (seg>=4 && seg<= 9)){ bh2_4to9 =true; f49 =true; }
-        if(fa && f310 && f49) break;
+        double xg,yg,zg; bool tmp=false;
+        toGlobal(p, C_BH2, xg,yg,zg, tmp);
+        hBH2_xy->Fill(xg,yg);
+        int seg = BH2_seg_fromX(xg);
+
+        if(!flagged_any){ bh2_any=true; flagged_any=true; }
+        if(!flagged_win && seg>=segLo && seg<=segHi){ bh2_inwin=true; flagged_win=true; }
+        if(!f310 && seg>=3 && seg<=10) f310=true;
+        if(!f49  && seg>=4 && seg<= 9) f49=true;
+
+        if(flagged_any && flagged_win && f310 && f49) break;
+      }
+      if(f310) ++nBH2_3to10;     // 전체 이벤트 대비 통계
+      if(f49)  ++nBH2_4to9;
+    }
+
+    // ---- VP1 채우기: (1) VP 브랜치 사용 시도 ----
+    bool filled_all=false, filled_sel=false;
+    if(VP && !VP->empty()){
+      for(const auto& p: *VP){
+        // 보통 VP는 글로벌이지만 혹시 몰라 그대로 사용
+        const double x=p.Vx(), y=p.Vy(), z=p.Vz();
+        if(std::fabs(z - VP1_Z) > 5.0) continue;
+        hVP1_all->Fill(x,y); vp1_any=true; filled_all=true;
+        if(bh2_inwin){ hVP1_sel->Fill(x,y); filled_sel=true; }
+        ++nVPbranchUsed;
+        break;
       }
     }
 
-    // VP1: ID 또는 Z-근접(순차 확대)로 판정
-    if(VP){
-      bool filled=false;
-      for(const auto& p: *VP){
-        const int seg = getSegId(p);
-        const double x=p.Vx(), y=p.Vy(), z=p.Vz();
+    // ---- (2) 투영: BH2 ↔ (KVC 우선, 없으면 HTOF) ----
+    if((!filled_all) || (bh2_inwin && !filled_sel)){
+      const TParticle* downRaw = nullptr; Ctr C_down = C_KVC;
+      if(KVC && !KVC->empty()){ downRaw=&(*KVC)[0]; C_down=C_KVC; }
+      else if(HTOF && !HTOF->empty()){ downRaw=&(*HTOF)[0]; C_down=C_HTOF; }
 
-        if(z<vpZmin) vpZmin=z;
-        if(z>vpZmax) vpZmax=z;
-
-        bool isVP1 = (seg==1 || seg==1001);
-        double dz = std::abs(z - VP1_Z);
-        if(!isVP1) {
-          if(dz<=2.0)      isVP1=true;
-          else if(dz<=10.0) isVP1=true;
-          else if(dz<=50.0) isVP1=true;
+      if(bh2_first && downRaw){
+        double dxg,dyg,dzg; bool ul2=false;
+        toGlobal(*downRaw, C_down, dxg,dyg,dzg, ul2);
+        double xi,yi;
+        if(lineIntersectAtZ(bxg,byg,bzg, dxg,dyg,dzg, VP1_Z, xi,yi)){
+          hVP1_all->Fill(xi,yi); vp1_any=true;
+          if(bh2_inwin) hVP1_sel->Fill(xi,yi);
+          ++nProjOK;
         }
-        if(!isVP1) continue;
-
-        hVP1_all->Fill(x,y);
-        vp1_any=true;
-        if(bh2_4to9) hVP1_bh49->Fill(x,y);
-        if(filled) break; filled=true;
       }
     }
 
     if(bh2_any)   ++nBH2_any;
-    if(bh2_3to10) ++nBH2_3to10;
-    if(bh2_4to9)  ++nBH2_4to9;
-    if(bh2_4to9 && vp1_any) ++nBH2_4to9_AND_VP1;
+    if(bh2_inwin) ++nBH2_win;
+    if(bh2_inwin && vp1_any) ++nBH2_win_AND_VP1;
   }
 
-  auto pct=[&](Long64_t k){ return N>0 ? 100.0*double(k)/double(N) : 0.0; };
+  auto pct=[&](Long64_t k){ return (N>0 ? 100.0*double(k)/double(N) : 0.0); };
 
+  // ===== 출력 요약 =====
   std::cout<<"\n================ SUMMARY ================\n";
-  std::cout<<"Total events                    : "<<N<<"\n";
-  std::cout<<"BH2 any-hit (N, %)             : "<<nBH2_any<<"  ("<<pct(nBH2_any) <<" %)\n";
-  std::cout<<"BH2 seg 3–10 pass (N, %)       : "<<nBH2_3to10<<"  ("<<pct(nBH2_3to10)<<" %)\n";
-  std::cout<<"BH2 seg 4–9  pass (N, %)       : "<<nBH2_4to9 <<"  ("<<pct(nBH2_4to9) <<" %)\n";
-  std::cout<<"BH2 seg 4–9  ∧ VP1 pass (N, %) : "<<nBH2_4to9_AND_VP1<<"  ("<<pct(nBH2_4to9_AND_VP1)<<" %)\n";
+  std::cout<<"Total events                        : "<<N<<"\n";
+  std::cout<<"BH2 any-hit (N, %)                 : "<<nBH2_any<<"  ("<<pct(nBH2_any) <<" %)\n";
+  std::cout<<"BH2 seg ["<<segLo<<","<<segHi<<"] (N, %)  : "<<nBH2_win<<"  ("<<pct(nBH2_win) <<" %)\n";
+  std::cout<<"BH2 seg 3–10 (N, %)                : "<<nBH2_3to10<<"  ("<<pct(nBH2_3to10)<<" %)\n";
+  std::cout<<"BH2 seg 4–9  (N, %)                : "<<nBH2_4to9 <<"  ("<<pct(nBH2_4to9) <<" %)\n";
+  std::cout<<"BH2 seg ["<<segLo<<","<<segHi<<"] ∧ VP1 (N, %): "<<nBH2_win_AND_VP1
+           <<"  ("<<pct(nBH2_win_AND_VP1)<<" %)\n";
+  std::cout<<"VP-branch used="<<nVPbranchUsed<<", Projected="<<nProjOK<<"\n";
 
-  // 히스토 엔트리 확인(캔버스 비어보일 때 원인 파악용)
-  std::cout<<"[DEBUG] Entries: hBH2_xy="<<hBH2_xy->GetEntries()
-           <<", hVP1_all="<<hVP1_all->GetEntries()
-           <<", hVP1_bh49="<<hVP1_bh49->GetEntries()<<"\n";
-  if(hasVP){
-    std::cout<<"[DEBUG] VP z-range seen: ["<<vpZmin<<", "<<vpZmax<<"] mm (VP1_Z="<<VP1_Z<<")\n";
-  }
-
-  // 오버레이 in/out
+  // 오버레이 상자 in/out
+  auto ratio=[](Long64_t a,Long64_t b){ double s=a+b; return s>0? 100.0*double(a)/s : 0.0; };
   const double xmin=BoxCx-BoxHX, xmax=BoxCx+BoxHX;
   const double ymin=BoxCy-BoxHY, ymax=BoxCy+BoxHY;
-  auto ratio=[](Long64_t a,Long64_t b){ double s=a+b; return s>0? 100.0*double(a)/s : 0.0; };
+  Long64_t nin_all=0, nout_all=0, nin_sel=0, nout_sel=0;
+  countInOut(hVP1_all , xmin,xmax,ymin,ymax, nin_all,nout_all);
+  countInOut(hVP1_sel , xmin,xmax,ymin,ymax, nin_sel,nout_sel);
 
-  Long64_t nin1=0,nout1=0,nin3=0,nout3=0;
-  countInOut(hVP1_all ,xmin,xmax,ymin,ymax,nin1,nout1);
-  countInOut(hVP1_bh49,xmin,xmax,ymin,ymax,nin3,nout3);
+  std::cout<<"\n---- Overlay (center (0,12), 136x112 mm) ----\n";
+  std::cout<<"[VP1 all] inside="<<nin_all<<"  outside="<<nout_all
+           <<"  (inside "<<ratio(nin_all,nout_all)<<" %)\n";
+  std::cout<<"[VP1 BH2 ["<<segLo<<","<<segHi<<"]] inside="<<nin_sel<<"  outside="<<nout_sel
+           <<"  (inside "<<ratio(nin_sel,nout_sel)<<" %)\n";
+  std::cout<<"=============================================\n\n";
 
-  std::cout<<"\n---- Overlay box: center(0,12), size 136x112 mm ----\n";
-  std::cout<<"[1] VP1(all)    : inside="<<nin1<<"  outside="<<nout1
-           <<"  (inside "<<ratio(nin1,nout1)<<" %)\n";
-  std::cout<<"[3] VP1(BH2 4–9): inside="<<nin3<<"  outside="<<nout3
-           <<"  (inside "<<ratio(nin3,nout3)<<" %)\n";
-  std::cout<<"===================================================\n\n";
+  // ===== 그림 (PNG 저장 기본 끔 + 강제 갱신) =====
+  TCanvas* c1=new TCanvas("c1","VP1 XY (all)",900,800);
+  hVP1_all->Draw("COLZ"); drawBox(); forceRefresh();
+  if(savePNG) c1->SaveAs("VP1_all_xy.png");
 
-  // 캔버스(강제 업데이트; PNG 저장 X)
-  TCanvas* c1=new TCanvas("c1","VP1 (all)",900,800);
-  hVP1_all->Draw("COLZ"); drawBox(); c1->Modified(); c1->Update();
+  TCanvas* c2=new TCanvas("c2","VP1 XY (BH2 selected)",900,800);
+  hVP1_sel->Draw("COLZ"); drawBox(); forceRefresh();
+  if(savePNG) c2->SaveAs("VP1_selected_xy.png");
 
-  TCanvas* c3=new TCanvas("c3","VP1 (BH2 seg4-9)",900,800);
-  hVP1_bh49->Draw("COLZ"); drawBox(); c3->Modified(); c3->Update();
-
-  TCanvas* c5=new TCanvas("c5","BH2 XY",900,700);
-  hBH2_xy->Draw("COLZ"); drawBH2Overlay(); c5->Modified(); c5->Update();
-
-  if(savePNG){
-    c1->SaveAs("VP1_all_xy.png");
-    c3->SaveAs("VP1_BH2seg4to9_xy.png");
-    c5->SaveAs("BH2_xy_with_segments.png");
-  }
+  TCanvas* c3=new TCanvas("c3","BH2 XY",900,700);
+  hBH2_xy->Draw("COLZ"); drawBH2Overlay(); forceRefresh();
+  if(savePNG) c3->SaveAs("BH2_xy_with_segments.png");
 
   f->Close();
   std::cout<<"[DONE]\n";
