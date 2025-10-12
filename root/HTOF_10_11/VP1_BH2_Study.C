@@ -1,10 +1,17 @@
-// VP1_BH2_Study_v7.C
-// - BH2 세그 구간을 함수 인자로 지정(segLo, segHi).
-// - macOS/ROOT 창 비표시 문제 회피: GL 페인터 off + 강제 Update.
-// - 좌표 저장이 로컬일 수 있어 BH2/KVC/HTOF는 로컬→글로벌 보정 후 사용.
-// - VP 브랜치가 없거나 맞지 않아도 BH2↔(KVC 우선, 없으면 HTOF)로 직선을 만들고
-//   Z = VP1_Z 에서의 교점(x,y)을 투영해 VP1 분포를 채움.
-// - PNG 저장은 기본 끔.
+// VP1_BH2_Study.C  (ROOT 6.32 호환: TTimer::SingleShot 사용 안 함)
+// - BH2 세그 구간을 인자로 지정(segLo, segHi) → 4–9, 3–10, 4–10 등 쉽게 변경
+// - macOS/화면 비표시 이슈 회피: GL painter 끄고 강제 Update
+// - 좌표가 로컬일 수 있어 BH2/KVC/HTOF는 로컬→글로벌 보정 후 사용
+// - VP 브랜치가 없거나 맞지 않아도 BH2↔(KVC 우선, 없으면 HTOF) 직선으로
+//   Z = VP1_Z 에서의 교점(x,y)을 투영해 VP1 분포를 채움
+// - PNG 저장은 기본 끔
+/*root -l
+.L VP1_BH2_Study.C+
+VP1_BH2_Study("../../E45_with_SCH.root","g4hyptpc",  /*segLo=*/3, /*segHi=*/10, /*VP1_Z=*/-337.0,/*savePNG=*/
+              /*segLo=*/3, /*segHi=*/10,  // ← 여기만 바꾸면 3–10 등으로 OK
+              /*VP1_Z=*/-337.0,
+          //    /*savePNG=*/false) 
+              
 
 #include <TFile.h>
 #include <TTree.h>
@@ -17,14 +24,12 @@
 #include <TStyle.h>
 #include <TROOT.h>
 #include <TSystem.h>
-#include <TApplication.h>
-#include <TTimer.h>
 #include <TInterpreter.h>
 #include <vector>
 #include <cmath>
 #include <iostream>
 
-namespace V7 {
+namespace V7F {
 
 // ====== 기하 상수(글로벌, mm) ======
 struct Ctr { double x,y,z; };
@@ -38,7 +43,7 @@ constexpr double BH2_W    = 14.0;              // seg width
 constexpr double BH2_Xc   = -10.0;             // BH2 center X
 constexpr double BH2_Ymin = -100.0, BH2_Ymax = 100.0;
 
-// 오버레이 박스 (요청치)
+// 오버레이 박스
 constexpr double BoxCx = 0.0;                  // mm
 constexpr double BoxCy = 12.0;
 constexpr double BoxW  = 136.0;
@@ -47,7 +52,7 @@ constexpr double BoxHX = BoxW*0.5, BoxHY = BoxH*0.5;
 
 // 히스토 범위
 constexpr int    Nbin = 200;
-constexpr double Xmin=-100, Xmax=100, Ymin=-100, Ymax=100;
+constexpr double Xmin=-500, Xmax=500, Ymin=-500, Ymax=500;
 
 inline bool looksLocalZ(double z_local, double z_center){
   // 로컬이면 z≈0, 글로벌이면 ≈ 중심 z
@@ -121,11 +126,10 @@ inline void countInOut(const TH2* h,double xmin,double xmax,double ymin,double y
 inline void forceRefresh(){
   gPad->Modified(); gPad->Update();
   gSystem->ProcessEvents();
-  gSystem->Sleep(50);
-  TTimer::SingleShot(150, "gPad->Modified(); gPad->Update();");
+  gSystem->Sleep(80);
 }
 
-} // namespace V7
+} // namespace V7F
 
 
 void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
@@ -134,9 +138,9 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
                    double VP1_Z=-337.0,          // VP1 평면 Z (필요시 변경)
                    bool savePNG=false)           // PNG 저장 여부(기본 끔)
 {
-  using namespace V7;
+  using namespace V7F;
 
-  // 렌더러/배치 설정: macOS 창 비표시 이슈 회피
+  // 렌더러/배치 설정: 창 비표시 이슈 회피
   gROOT->SetBatch(kFALSE);
   gStyle->SetCanvasPreferGL(kFALSE);
 
@@ -175,7 +179,7 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
   // 히스토
   TH2F* hVP1_all  = new TH2F("hVP1_all","VP1 XY (all; projected/globalized);X [mm];Y [mm]",
                               Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
-  TH2F* hVP1_sel  = new TH2F("hVP1_sel","VP1 XY (BH2 sel; projected/globalized);X [mm];Y [mm]",
+  TH2F* hVP1_sel  = new TH2F("hVP1_sel","VP1 XY (BH2 selected; projected/globalized);X [mm];Y [mm]",
                               Nbin,Xmin,Xmax, Nbin,Ymin,Ymax);
   TH2F* hBH2_xy   = new TH2F("hBH2_xy","BH2 XY (globalized);X [mm];Y [mm]",
                               Nbin,-150,150, Nbin,-100,100);
@@ -220,7 +224,7 @@ void VP1_BH2_Study(const char* fname="../../E45_with_SCH.root",
     bool filled_all=false, filled_sel=false;
     if(VP && !VP->empty()){
       for(const auto& p: *VP){
-        // 보통 VP는 글로벌이지만 혹시 몰라 그대로 사용
+        // 보통 VP는 글로벌 저장 → 그대로 사용, z만 확인
         const double x=p.Vx(), y=p.Vy(), z=p.Vz();
         if(std::fabs(z - VP1_Z) > 5.0) continue;
         hVP1_all->Fill(x,y); vp1_any=true; filled_all=true;
