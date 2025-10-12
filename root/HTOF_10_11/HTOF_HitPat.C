@@ -3,7 +3,8 @@
 // Usage:
 //   root -l
 //   .L HTOF_HitPat34.C+
-//   HTOF_HitPat34("E45_VP5.root","g4hyptpc", /*Rtol_mm=*/25.0, /*L_sign=*/+1,
+//   HTOF_HitPat34("E45_VP5.root","g4hyptpc", /*Rtol_mm=*/25.0, /*L_sign=*/+1,/*plane_offset=*/0, /*flip_local=*/false, /*UNIQUE_PER_EVENT=*/true);
+
 //                 /*plane_offset=*/0, /*flip_local=*/false, /*UNIQUE_PER_EVENT=*/true);
 
 #include "TFile.h"
