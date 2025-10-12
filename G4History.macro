@@ -21,3 +21,4 @@
 /vis/viewer/refresh viewer-0
 /vis/viewer/update viewer-0
 /vis/viewer/set/viewpointThetaPhi 269.999 -90.
+/geometry/test/run

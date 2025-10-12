@@ -119,7 +119,7 @@ DetectorConstruction::Construct()
   //ConstructBVH_U();
   //ConstructBVH_D();
   ConstructT0();
-  ConstructSCH();
+  //ConstructSCH();
 
 #endif
 
@@ -135,10 +135,10 @@ DetectorConstruction::Construct()
 #if 1
   ConstructTarget();
   ConstructHypTPC();
-  ConstructHTOF();
+  //ConstructHTOF();
 #endif
 
-#if 0
+#if 1
   ConstructVP();
 #endif
 
