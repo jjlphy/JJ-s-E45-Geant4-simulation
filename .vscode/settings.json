@@ -119,6 +119,7 @@
         "HTOF_BH2_summary.C": "cpp",
         "HTOF_BH2_summary_v2.C": "cpp",
         "HTOF_BH2_excludeSeg_v1.C": "cpp",
-        "VP1_BH2_Study.C": "cpp"
+        "VP1_BH2_Study.C": "cpp",
+        "HTOF_searching_others.C": "cpp"
     }
 }
