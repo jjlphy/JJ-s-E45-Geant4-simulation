@@ -46,7 +46,7 @@ constexpr double BoxHX = BoxW*0.5, BoxHY = BoxH*0.5;
 
 // 히스토 범위
 constexpr int    Nbin = 200;
-constexpr double Xmin=-500, Xmax=500, Ymin=-500, Ymax=500;
+constexpr double Xmin=-100, Xmax=100, Ymin=-100, Ymax=100;
 
 inline bool looksLocalZ(double z_local, double z_center){
   // 로컬이면 z≈0, 글로벌이면 ≈ 중심 z
