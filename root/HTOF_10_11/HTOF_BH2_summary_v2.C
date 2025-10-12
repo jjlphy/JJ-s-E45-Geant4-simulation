@@ -1,18 +1,15 @@
-// HTOF_BH2_summary_v2.C
-// (기존 논리판: HTOF ID=StatusCode, BH2 ID=좌표→세그, e-dep=Weight 사용)
+// HTOF_BH2_summary_v2.C  (폴백 제거판: ∑edep≥threshold만 유효)
 // 사용법:
 //   root -l
 //   .L HTOF_BH2_summary_v2.C+
-//   HTOF_BH2_summary_v2("../rootfile/E45_fix_Beam_098.root","g4hyptpc","3-11,4-9",true);
+//   HTOF_BH2_summary_v2("../rootfile/E45_fix_Beam_098.root","g4hyptpc","3-11,2-10",true);
 //
-// 기능 요약:
-//   - Section1: BH2(any), 추가 섹션은 "a-b,a-b,..." 문자열로 지정
-//   - e-dep 컷(기본 0.1 MIP): 폴리스티렌 dE/dx=2 MeV/cm, BH2=5 mm, HTOF=10 mm
-//   - e-dep 소스 우선순위: *_edep 브랜치 → TParticle::Weight()
-//   - ID 규약(기존 논리 고정):
-//       * HTOF tile ID = TParticle::StatusCode()
-//       * BH2 seg ID   = 좌표→세그 매핑(MapBH2_WorldToSeg)
-//   - HTOF==2 페어: 특수 7쌍(18–19…24–25) + others 집계, 인접(i-(i+1)) 히스토그램
+// 정책 요약:
+//   - HTOF 타일 ID = TParticle::StatusCode()
+//   - BH2 세그 ID  = 좌표→세그 매핑(MapBH2_WorldToSeg)
+//   - edep = *_edep 브랜치 우선, 없으면 TParticle::Weight()
+//   - 컷: 0.1 MIP (기본). 폴백(히트만 존재 시 인정) 완전 제거 -> ∑edep<thr이면 무조건 탈락
+//   - 섹션: "a-b,a-b,..."로 다중 지정; Section1은 항상 BH2(any)
 
 #include "TFile.h"
 #include "TTree.h"
@@ -34,17 +31,18 @@
 
 namespace HBS {
 
-// -------- geometry (E72-like) --------
+// ---- geometry (E72-like) ----
 static const int    kNBH2Seg   = 15;     // 0..14
 static const double kBH2_x0    = -10.0;  // [mm]
 static const double kBH2_pitch = 14.0;   // [mm]
 static const double kBH2_total = kNBH2Seg * kBH2_pitch;
-
 static const int    kNHTOF     = 34;     // 0..33
 
 struct DictGuard {
-  DictGuard(){ gSystem->Load("libPhysics");
-               gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector"); }
+  DictGuard(){
+    gSystem->Load("libPhysics");
+    gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector");
+  }
 };
 static DictGuard _dg;
 
@@ -55,7 +53,7 @@ static int MapBH2_WorldToSeg(double x, double, double){
   const double xmin = -0.5*kBH2_total;
   const double xmax =  0.5*kBH2_total;
   if (xloc < xmin || xloc >= xmax) return -1;
-  int idx = int(std::floor( (xloc - xmin)/kBH2_pitch ));
+  int idx = int(std::floor((xloc - xmin)/kBH2_pitch));
   if(idx<0) idx=0; if(idx>=kNBH2Seg) idx=kNBH2Seg-1;
   return idx;
 }
@@ -186,8 +184,8 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
   if(hasBH2edep)  T->SetBranchAddress("BH2_edep",&BH2_edep);
   if(hasHTOFedep) T->SetBranchAddress("HTOF_edep",&HTOF_edep);
 
-  const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);   // 0.10 MeV
-  const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);  // 0.20 MeV
+  const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);   // ex) 0.10 MeV
+  const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);  // ex) 0.20 MeV
 
   std::cout<<std::fixed<<std::setprecision(3);
   std::cout<<"[INFO] Energy cuts: mipFrac="<<mipFrac
@@ -196,7 +194,8 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
            <<", HTOF_th="<<HTOF_thickness_mm<<" mm (thr="<<thrHTOF<<" MeV)\n";
   if(!(hasBH2edep||hasHTOFedep))
     std::cout<<"[INFO] Using embedded TParticle::Weight() as edep (no *_edep branches).\n";
-  std::cout<<"[INFO] ID policy: HTOF=StatusCode, BH2=coordinate-mapping.\n";
+  std::cout<<"[INFO] ID policy: HTOF=StatusCode, BH2=coordinate-mapping. "
+              "Validity requires ∑edep ≥ threshold (no fallback).\n";
 
   auto specs = ParseRanges(ranges);
 
@@ -221,42 +220,36 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
     T->GetEntry(ie);
     for(auto& r:runs) r.box.N_total++;
 
-    // --- BH2: 좌표→세그, edep = *_edep or Weight ---
-    std::map<int,double> bh2E; std::set<int> bh2Any;
+    // --- BH2: 좌표→세그, ∑edep ---
+    std::map<int,double> bh2E; std::set<int> bh2Valid;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
         const TParticle& p=BH2->at(i);
         int sid = MapBH2_WorldToSeg(p.Vx(),p.Vy(),p.Vz());
         if(0<=sid && sid<kNBH2Seg){
-          double edep = (hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i)
-                                                                        : p.GetWeight();
-          bh2E[sid]+=edep; bh2Any.insert(sid);
+          const double edep = (hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i)
+                                                                              : p.GetWeight();
+          bh2E[sid] += edep;
         }
       }
+      for(auto& kv:bh2E){ if(kv.second >= thrBH2) bh2Valid.insert(kv.first); }
     }
-    std::set<int> bh2Valid;
-    bool anyE=false; for(auto& kv:bh2E){ if(kv.second>0){ anyE=true; break; } }
-    if(anyE){ for(auto& kv:bh2E){ if(kv.second>=thrBH2) bh2Valid.insert(kv.first); } }
-    else     { bh2Valid = bh2Any; }
     const bool passBH2_any = !bh2Valid.empty();
 
-    // --- HTOF: ID = StatusCode, edep = *_edep or Weight ---
-    std::map<int,double> htofE; std::set<int> htofAny;
+    // --- HTOF: ID=StatusCode, ∑edep ---
+    std::map<int,double> htofE; std::set<int> htofValid;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
         const TParticle& p=HTOF->at(i);
         int tid = p.GetStatusCode();
         if(0<=tid && tid<kNHTOF){
-          double edep = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i)
-                                                                           : p.GetWeight();
-          htofE[tid]+=edep; htofAny.insert(tid);
+          const double edep = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i)
+                                                                                 : p.GetWeight();
+          htofE[tid] += edep;
         }
       }
+      for(auto& kv:htofE){ if(kv.second >= thrHTOF) htofValid.insert(kv.first); }
     }
-    std::set<int> htofValid;
-    bool anyEH=false; for(auto& kv:htofE){ if(kv.second>0){ anyEH=true; break; } }
-    if(anyEH){ for(auto& kv:htofE){ if(kv.second>=thrHTOF) htofValid.insert(kv.first); } }
-    else     { htofValid = htofAny; }
     const int htMult=(int)htofValid.size();
 
     // --- Sections ---
