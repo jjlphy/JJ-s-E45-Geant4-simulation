@@ -1,8 +1,14 @@
-// HTOF_BH2_summary_v2.C  (namespace 격리판 + S2/S3 페어 히스토 + 퍼센트 출력)
+// HTOF_BH2_summary_v2.C  (구간 가변판: "4-9,4-11,3-8" 같은 문자열로 지정)
 // 사용법:
 //   root -l
 //   .L HTOF_BH2_summary_v2.C+
-//   HTOF_BH2_summary_v2("../rootfile/E45_Beam1.root","g4hyptpc",true);
+//   HTOF_BH2_summary_v2("../rootfile/E45_Beam1.root","g4hyptpc","4-9,4-11,3-8",true);
+//
+// 설명:
+//   - Section1은 항상 "BH2(any)"로 집계
+//   - ranges 문자열에 적은 각 구간(예: 4-9)을 Section2,3,... 로 자동 생성
+//   - 각 섹션에 대해 HTOF 1D 패턴, HTOF==2 인접 페어 히스토그램(i-(i+1)) 생성
+//   - 콘솔에는 각 섹션의 카운트/퍼센트와 (18..24) 특수 페어 + others 요약 출력
 
 #include "TFile.h"
 #include "TTree.h"
@@ -12,6 +18,8 @@
 #include "TInterpreter.h"
 #include "TParticle.h"
 #include "TString.h"
+#include "TObjArray.h"
+#include "TObjString.h"
 #include <vector>
 #include <set>
 #include <map>
@@ -19,6 +27,7 @@
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
+#include <cctype>
 
 namespace HBS { // ======== 모든 전역/헬퍼 격리 ========
 
@@ -48,7 +57,6 @@ static bool HasBranch(TTree* tr, const char* bname){
 // 월드좌표 → BH2 세그(0..14), 실패 시 -1
 static int MapBH2_WorldToSeg(double x, double y, double z)
 {
-  // if (std::fabs(z - kBH2_z0) > 10.0) return -1; // z근접성 쓰고싶으면 해제
   const double xloc = x - kBH2_x0;           // BH2 중심 기준 x'
   const double xmin = -0.5*kBH2_total;       // -105
   const double xmax =  0.5*kBH2_total;       // +105
@@ -107,37 +115,33 @@ struct StatsBox {
   PairCount pairSummary;
 
   TH1I* hHTOF = nullptr;        // HTOF 1D 패턴(유니크 타일)
-  TH1I* hPairAdj = nullptr;     // (옵션) 인접 페어 34개 (i,i+1), i=0..33(33→0)
+  TH1I* hPairAdj = nullptr;     // 인접 페어 34개 (i,i+1), i=0..33(33→0)
 
-  void InitHist(const char* hname, const char* htitle){
-    hHTOF = new TH1I(hname, htitle, kNHTOF, -0.5, kNHTOF-0.5);
+  void InitHist(const TString& key, const TString& title){
+    hHTOF = new TH1I(key, title, kNHTOF, -0.5, kNHTOF-0.5);
     hHTOF->SetDirectory(nullptr);
   }
-  // 섹션2/3 전용: 인접 페어 히스토그램(34bin) 초기화 + 라벨
-  void InitPairHist(const char* hname, const char* htitle){
-    hPairAdj = new TH1I(hname, htitle, kNHTOF, -0.5, kNHTOF-0.5);
+  void InitPairHist(const TString& key, const TString& title){
+    hPairAdj = new TH1I(key, title, kNHTOF, -0.5, kNHTOF-0.5);
     hPairAdj->SetDirectory(nullptr);
-    // bin label: "i-(i+1)" with wrap
     for(int i=0;i<kNHTOF;++i){
       int j = (i+1) % kNHTOF;
       TString lab; lab.Form("%d-%d", i, j);
       hPairAdj->GetXaxis()->SetBinLabel(i+1, lab);
     }
   }
-  // HTOF==2일 때 인접페어면 해당 bin에 +1 (wrap 포함), 아니면 others만 증가 (히스토엔 미반영)
   void FillPairHistIfAdjacent(const std::set<int>& tiles){
     if(!hPairAdj) return;
     if((int)tiles.size()!=2) return;
     auto it = tiles.begin();
     int a = *it; ++it; int b = *it;
     if(a>b) std::swap(a,b);
-    // 인접성 체크 (wrap 포함)
     if(b==a+1){
       hPairAdj->Fill(a);
-    }else if(a==0 && b==(kNHTOF-1)){ // (0,33) → bin index 33
+    }else if(a==0 && b==(kNHTOF-1)){
       hPairAdj->Fill(kNHTOF-1);
     }else{
-      // 비인접 조합은 히스토그램에는 넣지 않음 (others는 pairSummary에서 집계됨)
+      // 비인접 조합은 스킵 (others는 PairCount에서 집계)
     }
   }
 
@@ -172,11 +176,70 @@ static bool BH2HitsInRange(const std::set<int>& bh2Seg, int lo, int hi){
   return false;
 }
 
+// ===== 섹션 스펙과 파서 =====
+struct SectionSpec {
+  bool isAny = false; // true면 BH2(any)
+  int  lo = 0;
+  int  hi = 0;
+  TString tag;   // "BH2(any)" 또는 "BH2 seg lo-hi"
+  TString key;   // 캔버스/히스토 키 접두어
+};
+
+static inline TString TrimWS(const TString& s){
+  TString t=s; t.ReplaceAll(" ",""); t.ReplaceAll("\t",""); return t;
+}
+
+// "4-9,4-11,3-8" → { (4,9), (4,11), (3,8) }
+static std::vector<SectionSpec> ParseRanges(const char* rangesCSV){
+  std::vector<SectionSpec> out;
+  // 항상 Section1: any
+  SectionSpec any; any.isAny=true; any.tag="BH2(any seg)"; any.key="BH2_any";
+  out.push_back(any);
+
+  if(!rangesCSV) return out;
+  TString csv = rangesCSV;
+  csv = csv.Strip(TString::kBoth);
+  if(csv.Length()==0) return out;
+
+  TObjArray* toks = csv.Tokenize(",");
+  if(!toks) return out;
+  for(int i=0;i<toks->GetEntriesFast(); ++i){
+    auto* obj = toks->At(i);
+    if(!obj) continue;
+    TString tok = ((TObjString*)obj)->GetString();
+    tok = TrimWS(tok);
+    if(tok.Length()==0) continue;
+
+    // 허용 형식: "a-b"
+    Ssiz_t dash = tok.Index("-");
+    if(dash==kNPOS){ std::cerr<<"[WARN] bad range token: "<<tok<<"\n"; continue; }
+    TString A = tok(0, dash);
+    TString B = tok(dash+1, tok.Length()-dash-1);
+    A = TrimWS(A); B = TrimWS(B);
+    if(A.Length()==0 || B.Length()==0){ std::cerr<<"[WARN] bad range token: "<<tok<<"\n"; continue; }
+
+    int lo = A.Atoi();
+    int hi = B.Atoi();
+    if(lo>hi) std::swap(lo,hi);
+    if(lo<0) lo=0;
+    if(hi>=kNBH2Seg) hi=kNBH2Seg-1;
+
+    SectionSpec sp;
+    sp.isAny=false; sp.lo=lo; sp.hi=hi;
+    sp.tag.Form("BH2 seg %d-%d", lo, hi);
+    sp.key.Form("BH2_%d_%d", lo, hi);
+    out.push_back(sp);
+  }
+  delete toks;
+  return out;
+}
+
 } // namespace HBS
 
-// ======== 공개 함수 (이름도 v2로 유지) ========
+// ======== 공개 함수 ========
 void HTOF_BH2_summary_v2(const char* filename="E45.root",
                          const char* treename="g4hyptpc",
+                         const char* ranges="4-9,4-11,3-8",
                          bool save=true)
 {
   using namespace HBS;
@@ -205,20 +268,52 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
   if(hasHTOFvec)  T->SetBranchAddress("HTOF",&HTOF);
   if(hasHTOFcopy) T->SetBranchAddress("HTOF_copyNo",&HTOF_copyNo);
 
-  // 섹션별 집계 박스 & 히스토
-  StatsBox S1, S2, S3;
-  S1.InitHist("hHTOF_BH2_all",   "HTOF pattern | BH2 (any seg);HTOF tile;Events");
-  S2.InitHist("hHTOF_BH2_3_10",  "HTOF pattern | BH2 seg 3-10;HTOF tile;Events");
-  S3.InitHist("hHTOF_BH2_4_9",   "HTOF pattern | BH2 seg 4-9;HTOF tile;Events");
-  // 섹션2/3: 인접 페어 히스토도 생성
-  S2.InitPairHist("hPairs_BH2_3_10", "Adjacent HTOF pairs (i-(i+1)) | BH2 seg 3-10;pair;Events");
-  S3.InitPairHist("hPairs_BH2_4_9",  "Adjacent HTOF pairs (i-(i+1)) | BH2 seg 4-9;pair;Events");
+  // ===== 섹션 스펙 구성 (Section1은 always any, 이후는 ranges 문자열 기반) =====
+  std::vector<SectionSpec> specs = ParseRanges(ranges);
 
-  // 루프
+  // 섹션 별 StatsBox 및 히스토 준비
+  struct SectionRun {
+    SectionSpec spec;
+    StatsBox box;
+    TCanvas* cHTOF = nullptr;
+    TCanvas* cPair = nullptr;
+  };
+  std::vector<SectionRun> runs;
+  runs.reserve(specs.size());
+
+  for(size_t i=0;i<specs.size(); ++i){
+    const auto& sp = specs[i];
+    SectionRun r; r.spec = sp;
+
+    // HTOF 1D 히스토
+    TString hname, htitle;
+    hname.Form("hHTOF_%s", sp.key.Data());
+    if(sp.isAny){
+      htitle = "HTOF pattern | BH2(any seg);HTOF tile;Events";
+    }else{
+      htitle.Form("HTOF pattern | %s;HTOF tile;Events", sp.tag.Data());
+    }
+    r.box.InitHist(hname, htitle);
+
+    // 인접 페어 히스토 (모든 섹션에 대해 생성)
+    TString hp, tp;
+    hp.Form("hPairs_%s", sp.key.Data());
+    if(sp.isAny){
+      tp = "Adjacent HTOF pairs (i-(i+1)) | BH2(any seg);pair;Events";
+    }else{
+      tp.Form("Adjacent HTOF pairs (i-(i+1)) | %s;pair;Events", sp.tag.Data());
+    }
+    r.box.InitPairHist(hp, tp);
+
+    runs.push_back(r);
+  }
+
+  // ===== 이벤트 루프 =====
   const Long64_t N = T->GetEntries();
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie);
-    S1.N_total++; S2.N_total++; S3.N_total++;
+    // 모든 섹션의 N_total 동시 증가
+    for(auto& r : runs) r.box.N_total++;
 
     // (1) BH2 세그 집합
     std::set<int> bh2Seg;
@@ -228,9 +323,7 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
         if(0 <= s && s < kNBH2Seg) bh2Seg.insert(s);
       }
     }
-    const bool passBH2_any   = !bh2Seg.empty();
-    const bool passBH2_3_10  = BH2HitsInRange(bh2Seg, 3, 10);
-    const bool passBH2_4_9   = BH2HitsInRange(bh2Seg, 4, 9);
+    const bool passBH2_any = !bh2Seg.empty();
 
     // (2) HTOF 세그 집합 (유니크)
     std::set<int> htofSeg;
@@ -246,72 +339,51 @@ void HTOF_BH2_summary_v2(const char* filename="E45.root",
     }
     const int htMult = (int)htofSeg.size();
 
-    // ---------- Section1: BH2(any) ----------
-    if(passBH2_any){
-      S1.N_BH2sel++;
-      if(htMult>=1) S1.N_ge1++;
-      if(htMult>=2) S1.N_ge2++;
-      if(htMult==2){
-        S1.N_eq2++;
-        S1.pairSummary.Fill(htofSeg);
+    // 섹션별 집계
+    for(auto& r : runs){
+      bool passBH2 = false;
+      if(r.spec.isAny){
+        passBH2 = passBH2_any;
+      }else{
+        passBH2 = BH2HitsInRange(bh2Seg, r.spec.lo, r.spec.hi);
       }
-      for(int t : htofSeg) S1.hHTOF->Fill(t);
-    }
 
-    // ---------- Section2: BH2 seg 3~10 ----------
-    if(passBH2_3_10){
-      S2.N_BH2sel++;
-      if(htMult>=1) S2.N_ge1++;
-      if(htMult>=2) S2.N_ge2++;
-      if(htMult==2){
-        S2.N_eq2++;
-        S2.pairSummary.Fill(htofSeg);
-        S2.FillPairHistIfAdjacent(htofSeg); // 인접 페어 히스토 누적
+      if(passBH2){
+        r.box.N_BH2sel++;
+        if(htMult>=1) r.box.N_ge1++;
+        if(htMult>=2) r.box.N_ge2++;
+        if(htMult==2){
+          r.box.N_eq2++;
+          r.box.pairSummary.Fill(htofSeg);
+          r.box.FillPairHistIfAdjacent(htofSeg);
+        }
+        for(int t : htofSeg) r.box.hHTOF->Fill(t);
       }
-      for(int t : htofSeg) S2.hHTOF->Fill(t);
-    }
-
-    // ---------- Section3: BH2 seg 4~9 ----------
-    if(passBH2_4_9){
-      S3.N_BH2sel++;
-      if(htMult>=1) S3.N_ge1++;
-      if(htMult>=2) S3.N_ge2++;
-      if(htMult==2){
-        S3.N_eq2++;
-        S3.pairSummary.Fill(htofSeg);
-        S3.FillPairHistIfAdjacent(htofSeg); // 인접 페어 히스토 누적
-      }
-      for(int t : htofSeg) S3.hHTOF->Fill(t);
     }
   }
 
-  // 결과 출력
-  S1.Print("Section1: BH2(any seg)");
-  S2.Print("Section2: BH2 seg 3-10");
-  S3.Print("Section3: BH2 seg 4-9");
+  // ===== 출력 + 그림 =====
+  for(size_t i=0;i<runs.size(); ++i){
+    auto& r = runs[i];
+    TString title = r.spec.tag.Length()? r.spec.tag : "BH2(any seg)";
+    r.box.Print(title);
 
-  // 히스토그램 그리기 & 저장
-  TCanvas* c1 = new TCanvas("cHTOF_BH2_all","HTOF | BH2(any)",800,600);
-  S1.hHTOF->Draw("hist");
+    // 1D 패턴
+    TString cname1; cname1.Form("cHTOF_%s", r.spec.key.Data());
+    r.cHTOF = new TCanvas(cname1, title, 800, 600);
+    r.box.hHTOF->Draw("hist");
 
-  TCanvas* c2 = new TCanvas("cHTOF_BH2_3_10","HTOF | BH2(3-10)",800,600);
-  S2.hHTOF->Draw("hist");
+    // 인접 페어
+    TString cname2; cname2.Form("cPairs_%s", r.spec.key.Data());
+    r.cPair = new TCanvas(cname2, TString("Adjacent pairs | ")+title, 900, 600);
+    r.box.hPairAdj->LabelsOption("v","X");
+    r.box.hPairAdj->Draw("hist");
 
-  TCanvas* c3 = new TCanvas("cHTOF_BH2_4_9","HTOF | BH2(4-9)",800,600);
-  S3.hHTOF->Draw("hist");
-
-  // Section2/3 페어 히스토 (인접 페어 34bin)
-  TCanvas* c4 = new TCanvas("cPairs_BH2_3_10","Adjacent pairs | BH2(3-10)",900,600);
-  if(S2.hPairAdj){ S2.hPairAdj->LabelsOption("v","X"); S2.hPairAdj->Draw("hist"); }
-
-  TCanvas* c5 = new TCanvas("cPairs_BH2_4_9","Adjacent pairs | BH2(4-9)",900,600);
-  if(S3.hPairAdj){ S3.hPairAdj->LabelsOption("v","X"); S3.hPairAdj->Draw("hist"); }
-
-  if(save){
-    c1->SaveAs("HTOF_pattern_BH2_any.png");
-    c2->SaveAs("HTOF_pattern_BH2_3_10.png");
-    c3->SaveAs("HTOF_pattern_BH2_4_9.png");
-    if(S2.hPairAdj) c4->SaveAs("HTOF_pairs_BH2_3_10.png");
-    if(S3.hPairAdj) c5->SaveAs("HTOF_pairs_BH2_4_9.png");
+    if(save){
+      TString fn1; fn1.Form("HTOF_pattern_%s.png", r.spec.key.Data());
+      TString fn2; fn2.Form("HTOF_pairs_%s.png",   r.spec.key.Data());
+      r.cHTOF->SaveAs(fn1);
+      r.cPair->SaveAs(fn2);
+    }
   }
 }
