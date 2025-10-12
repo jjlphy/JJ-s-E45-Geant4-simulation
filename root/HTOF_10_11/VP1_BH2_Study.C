@@ -38,7 +38,7 @@ constexpr double BH2_Ymin = -100.0, BH2_Ymax=100.0;
 constexpr double VP1_Z    = -337.0; // mm
 
 constexpr int    Nbin = 200;
-constexpr double Xmin=-500, Xmax=500, Ymin=-500, Ymax=500;
+constexpr double Xmin=-100, Xmax=100, Ymin=-100, Ymax=100;
 
 inline int getSegId(const TParticle& p){
   int sc = p.GetStatusCode();
