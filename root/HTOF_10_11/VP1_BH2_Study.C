@@ -5,12 +5,7 @@
 // - VP 브랜치가 없거나 맞지 않아도 BH2↔(KVC 우선, 없으면 HTOF) 직선으로
 //   Z = VP1_Z 에서의 교점(x,y)을 투영해 VP1 분포를 채움
 // - PNG 저장은 기본 끔
-/*root -l
-.L VP1_BH2_Study.C+
-VP1_BH2_Study("../../E45_with_SCH.root","g4hyptpc",  /*segLo=*/3, /*segHi=*/10, /*VP1_Z=*/-337.0,/*savePNG=*/
-              /*segLo=*/3, /*segHi=*/10,  // ← 여기만 바꾸면 3–10 등으로 OK
-              /*VP1_Z=*/-337.0,
-          //    /*savePNG=*/false) 
+
               
 
 #include <TFile.h>
