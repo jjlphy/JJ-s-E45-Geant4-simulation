@@ -1,7 +1,7 @@
-// HTOF_searching_others.C
-// 목적: BH2 [lo,hi] 구간 통과 이벤트 중 (A) HTOF==2 others, (B) HTOF>2 를 선별하여
-//       (1) BH2 hit pattern (1D), (2) HTOF hit pattern (1D), (3) BH2 vs HTOF (2D) 히스토그램 생성/저장.
-// 정책(기존 논리):
+// HTOF_searching_others.C  (합본: OTHERS ∪ (HTOF mult>2), BH2 1D만 그림, HTOF 조합 콘솔 출력)
+// 목적: BH2 [lo,hi] 구간 통과 이벤트 중 (A) HTOF==2 others, (B) HTOF>2 를 합쳐서 선택.
+//       선택 이벤트에 대해 (1) BH2 hit pattern (1D)만 그리기, (2) 각 이벤트의 HTOF 조합을 터미널에 출력.
+// 정책(기존 논리 유지):
 //   * HTOF 타일 ID = TParticle::StatusCode()
 //   * BH2 세그 ID  = 좌표→세그 매핑(MapBH2_WorldToSeg)
 //   * edep = *_edep 브랜치 우선, 없으면 TParticle::Weight()
@@ -13,7 +13,6 @@
 #include "TSystem.h"
 #include "TInterpreter.h"
 #include "TH1I.h"
-#include "TH2I.h"
 #include "TCanvas.h"
 #include "TString.h"
 #include <vector>
@@ -22,6 +21,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <algorithm>
 
 namespace HSO {
 
@@ -66,13 +66,13 @@ static inline bool IsOthersPair(const std::set<int>& tiles){
   return !isAdj7;
 }
 
-// set<int> 유니크 아이템으로 1D, 2D 히스토 채우기
-static inline void FillPatterns(const std::set<int>& bh2Seg,
-                                const std::set<int>& htofSeg,
-                                TH1I* hBH2, TH1I* hHTOF, TH2I* h2){
-  if(hBH2)  for(int s:bh2Seg)  hBH2->Fill(s);
-  if(hHTOF) for(int t:htofSeg) hHTOF->Fill(t);
-  if(h2)    for(int s:bh2Seg) for(int t:htofSeg) h2->Fill(s,t);
+// set<int> → "(a,b,c)" 문자열
+static std::string SetToTuple(const std::set<int>& S){
+  std::string out="(";
+  bool first=true;
+  for(int v:S){ if(!first) out += ","; first=false; out += std::to_string(v); }
+  out += ")";
+  return out;
 }
 
 } // namespace HSO
@@ -81,13 +81,13 @@ static inline void FillPatterns(const std::set<int>& bh2Seg,
 // ================= PUBLIC =================
 void HTOF_searching_others(const char* filename,
                            const char* treename="g4hyptpc",
-                           int bh2_lo=3, int bh2_hi=11,
+                           int bh2_lo=4, int bh2_hi=10,
                            double mipFrac=0.1,
                            double mipMeVperCm=2.0,
                            double BH2_thickness_mm=5.0,
                            double HTOF_thickness_mm=10.0,
                            bool save=true,
-                           const char* tag="BH2_3_11")
+                           const char* tag="BH2_4_10")
 {
   using namespace HSO;
 
@@ -118,32 +118,22 @@ void HTOF_searching_others(const char* filename,
   std::cout<<"[INFO] ID: HTOF=StatusCode, BH2=coordinate mapping. edep=";
   if(hasBH2edep||hasHTOFedep) std::cout<<"*_edep or Weight\n"; else std::cout<<"Weight\n";
 
-  // histograms (OTHERS)
-  TH1I* hBH2_O = new TH1I("hBH2_others",  "BH2 hit pattern (OTHERS);BH2 seg;Events", kNBH2Seg,-0.5,kNBH2Seg-0.5);
-  TH1I* hHTOF_O= new TH1I("hHTOF_others", "HTOF hit pattern (OTHERS);HTOF tile;Events", kNHTOF,-0.5,kNHTOF-0.5);
-  TH2I* h2_O   = new TH2I("hBH2vHTOF_others","BH2 vs HTOF (OTHERS);BH2 seg;HTOF tile",
-                          kNBH2Seg,-0.5,kNBH2Seg-0.5, kNHTOF,-0.5,kNHTOF-0.5);
-
-  // histograms (HTOF>2)
-  TH1I* hBH2_G = new TH1I("hBH2_gt2",  "BH2 hit pattern (HTOF>2);BH2 seg;Events", kNBH2Seg,-0.5,kNBH2Seg-0.5);
-  TH1I* hHTOF_G= new TH1I("hHTOF_gt2", "HTOF hit pattern (HTOF>2);HTOF tile;Events", kNHTOF,-0.5,kNHTOF-0.5);
-  TH2I* h2_G   = new TH2I("hBH2vHTOF_gt2","BH2 vs HTOF (HTOF>2);BH2 seg;HTOF tile",
-                          kNBH2Seg,-0.5,kNBH2Seg-0.5, kNHTOF,-0.5,kNHTOF-0.5);
-
-  hBH2_O->SetDirectory(nullptr); hHTOF_O->SetDirectory(nullptr); h2_O->SetDirectory(nullptr);
-  hBH2_G->SetDirectory(nullptr); hHTOF_G->SetDirectory(nullptr); h2_G->SetDirectory(nullptr);
+  // histogram: BH2 hit pattern (선택 이벤트만)
+  TH1I* hBH2 = new TH1I("hBH2_sel", "BH2 hit pattern (OTHERS ∪ mult>2);BH2 seg;Events",
+                        kNBH2Seg,-0.5,kNBH2Seg-0.5);
+  hBH2->SetDirectory(nullptr);
 
   auto inBH2Range = [=](const std::set<int>& S){
     for(int s:S){ if(bh2_lo<=s && s<=bh2_hi) return true; }
     return false;
   };
 
-  Long64_t nOthers=0, nGT2=0;
+  Long64_t nSelected=0;
   const Long64_t N=T->GetEntries();
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie);
 
-    // --- BH2 valid set ---
+    // --- BH2 valid set (∑edep with fallback as in existing logic) ---
     std::map<int,double> bh2E; std::set<int> bh2Any;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
@@ -163,7 +153,7 @@ void HTOF_searching_others(const char* filename,
 
     if(bh2Valid.empty() || !inBH2Range(bh2Valid)) continue; // BH2 구간 조건
 
-    // --- HTOF valid set (ID=StatusCode) ---
+    // --- HTOF valid set (ID=StatusCode, ∑edep with fallback as in existing logic) ---
     std::map<int,double> htofE; std::set<int> htofAny;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
@@ -184,41 +174,26 @@ void HTOF_searching_others(const char* filename,
     const int m = (int)htofValid.size();
     if(m<2) continue;
 
-    if(m==2){
-      if(IsOthersPair(htofValid)){
-        FillPatterns(bh2Valid, htofValid, hBH2_O, hHTOF_O, h2_O);
-        ++nOthers;
-      }
-    }else{ // m>=3
-      FillPatterns(bh2Valid, htofValid, hBH2_G, hHTOF_G, h2_G);
-      ++nGT2;
-    }
+    // --- 합본 선택: (m>=3) OR (m==2 && others) ---
+    bool isOthers = (m==2) && IsOthersPair(htofValid);
+    bool isGT2    = (m>=3);
+    if(!(isOthers || isGT2)) continue;
+
+    // 콘솔 출력: HTOF 조합
+    std::cout << "HTOF " << SetToTuple(htofValid) << "\n";
+
+    // BH2 1D 채우기 (유니크 세그 기준, 이벤트당 한 번씩 증가)
+    for(int s:bh2Valid) hBH2->Fill(s);
+    ++nSelected;
   }
 
-  std::cout<<"[DONE] Selected events: OTHERS="<<nOthers<<", HTOF>2="<<nGT2<<"\n";
+  std::cout<<"[DONE] Selected events (OTHERS ∪ mult>2): "<<nSelected<<"\n";
 
   // --- draw & save ---
-  TCanvas* c1=new TCanvas("cOthers_BH2","OTHERS - BH2 hit pattern",800,600);
-  hBH2_O->Draw("hist");
-  TCanvas* c2=new TCanvas("cOthers_HTOF","OTHERS - HTOF hit pattern",800,600);
-  hHTOF_O->Draw("hist");
-  TCanvas* c3=new TCanvas("cOthers_2D","OTHERS - BH2 vs HTOF",900,700);
-  h2_O->Draw("COLZ");
-
-  TCanvas* c4=new TCanvas("cGT2_BH2","HTOF>2 - BH2 hit pattern",800,600);
-  hBH2_G->Draw("hist");
-  TCanvas* c5=new TCanvas("cGT2_HTOF","HTOF>2 - HTOF hit pattern",800,600);
-  hHTOF_G->Draw("hist");
-  TCanvas* c6=new TCanvas("cGT2_2D","HTOF>2 - BH2 vs HTOF",900,700);
-  h2_G->Draw("COLZ");
-
+  TCanvas* c1=new TCanvas("cBH2_sel","BH2 hit pattern (OTHERS ∪ mult>2)",800,600);
+  hBH2->Draw("hist");
   if(save){
     TString t(tag);
-    c1->SaveAs("others_BH2pattern_"+t+".png");
-    c2->SaveAs("others_HTOFpattern_"+t+".png");
-    c3->SaveAs("others_BH2vHTOF_"+t+".png");
-    c4->SaveAs("gt2_BH2pattern_"+t+".png");
-    c5->SaveAs("gt2_HTOFpattern_"+t+".png");
-    c6->SaveAs("gt2_BH2vHTOF_"+t+".png");
+    c1->SaveAs("BH2pattern_selected_"+t+".png");
   }
 }
