@@ -8,6 +8,8 @@
 // Policies: HTOF ID = TParticle::StatusCode(), BH2 ID = coordinate→segment.
 //           edep: *_edep branch if exists else TParticle::Weight().
 //           VALID hit requires sum(edep) >= threshold (no fallback).
+//HTOF_trigger_study("../rootfile/E45_fix_Beam_098.root","g4hyptpc",4,10,0.1,2.0,5.0,10.0,true,"BH2_4_10");
+
 // Cuts: default 0.1 MIP with dE/dx=2 MeV/cm, BH2=5 mm, HTOF=10 mm.
 
 #include "TFile.h"
@@ -176,7 +178,7 @@ void HTOF_trigger_study(const char* filename,
     }
   }
 
-  auto pct = [](LongLong_t a, LongLong_t b)->double{ return (b>0)? (100.0*(double)a/(double)b):0.0; };
+auto pct = [](long long a, long long b)->double{ return (b>0)? (100.0*(double)a/(double)b):0.0; };
 
   // ---- print summary ----
   std::cout<<"\n==== Trigger summary (BH2 "<<bh2_lo<<"-"<<bh2_hi<<") ====\n";
