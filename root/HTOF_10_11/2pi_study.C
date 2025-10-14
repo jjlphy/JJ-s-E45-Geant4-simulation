@@ -1,20 +1,5 @@
-// 2pi_study.C
-// E45/E72 forced-2pi 분석 유틸 (BH2・HTOF 정책은 HTOF_* 참고본과 동일)
-//
-// 사용 예:
-//   root -l
-//   .L 2pi_study.C+
-//   two_pi_study("../rootfile/E45_fix_Beam_098.root", "g4hyptpc", 4, 10, true);
-//
-// 출력:
-//   - 터미널: 총 이벤트, BH2[4-10], no-reaction 개수, (no-reaction 제외) BH2[4-10],
-//             (no-reaction 집합에서) Trig1 = BH2[4-10] ⊗ HTOF mult≥2
-//   - 그림: (no-reaction 집합 & origin!=1)에서
-//           hNpiMinus, hNpiPlus, h2_NpiMinus_vs_NpiPlus, h2_NpiMinus_vs_Np
-//
-// 임계값(기본): 0.1 MIP, dE/dx=2 MeV/cm, BH2=5 mm, HTOF=10 mm
-// ID정책: HTOF tile = TParticle::StatusCode(), BH2 seg = 좌표→세그 매핑(MapBH2_WorldToSeg)
-// edep 정책: *_edep 브랜치 우선, 없으면 TParticle::Weight(); 합계가 thr 이상일 때만 유효 히트
+// 2pi_study.C  (fixed template name shadowing)
+// E45/E72 forced-2pi analysis helper
 
 #include "TFile.h"
 #include "TTree.h"
@@ -67,11 +52,14 @@ static int MapBH2_WorldToSeg(double x, double, double){
 
 static inline bool HasBranch(TTree* tr, const char* b){ return tr && tr->GetBranch(b); }
 
-// helper: try multiple branch names
-template<class T>
-static bool AttachBranch(TTree* T, const std::vector<const char*>& names, T** ptrOut, TString& chosen){
+// --- FIX: avoid shadowing 'T' and make type explicit
+template<class BranchT>
+static bool AttachBranchGeneric(TTree* tr,
+                                const std::vector<const char*>& names,
+                                BranchT** ptrOut,
+                                TString& chosen){
   for(const char* nm : names){
-    if(HasBranch(T,nm)){ T->SetBranchAddress(nm, ptrOut); chosen = nm; return true; }
+    if(HasBranch(tr,nm)){ tr->SetBranchAddress(nm, ptrOut); chosen = nm; return true; }
   }
   return false;
 }
@@ -111,12 +99,12 @@ void two_pi_study(const char* filename,
   std::vector<double>* HTOF_edep=nullptr; if(hasHTOFedep) T->SetBranchAddress("HTOF_edep",&HTOF_edep);
 
   // --- optional truth branches for reaction & beam tagging
-  // origin: 0=unknown, 1=kPrimaryBeam, 2=kForced2PiChild(반응 자식)
   std::vector<int>*   vOrigin=nullptr; TString bOrigin;
   std::vector<int>*   vPDG   =nullptr; TString bPDG;
 
-  bool hasOrigin = AttachBranch(T, {"track_origin","trk_origin","origin"}, &vOrigin, bOrigin);
-  bool hasPDG    = AttachBranch(T, {"track_pdg","trk_pdg","pdg"},         &vPDG,    bPDG);
+  // FIX: call the generic function with explicit type
+  bool hasOrigin = AttachBranchGeneric<std::vector<int>>(T, {"track_origin","trk_origin","origin"}, &vOrigin, bOrigin);
+  bool hasPDG    = AttachBranchGeneric<std::vector<int>>(T, {"track_pdg","trk_pdg","pdg"},         &vPDG,    bPDG);
 
   if(!hasOrigin){
     std::cerr<<"[WARN] origin branch not found (track_origin/trk_origin/origin). "
@@ -142,11 +130,11 @@ void two_pi_study(const char* filename,
 
   Long64_t N_noReaction=0;
   Long64_t N_BH2_4_10_in_noReaction=0;
-  Long64_t N_BH2_4_10_reactionOnly=0; // derived later
+  Long64_t N_BH2_4_10_reactionOnly=0;
 
-  Long64_t N_trig1_in_noReaction=0;   // (no-reaction) & [BH2 in 4-10] & [HTOF mult>=2]
+  Long64_t N_trig1_in_noReaction=0;
 
-  // --- histograms (no-reaction & origin!=1 에서)
+  // --- histograms (no-reaction & origin!=1)
   TH1I* hNpiMinus=nullptr;
   TH1I* hNpiPlus =nullptr;
   TH2I* h2_Npim_vs_Piplus=nullptr;
@@ -169,7 +157,7 @@ void two_pi_study(const char* filename,
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie); N_total++;
 
-    // ---- BH2 유효 세그 집합 (edep 합 ≥ thr)
+    // ---- BH2 valid segs
     std::map<int,double> bh2E;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
@@ -189,7 +177,7 @@ void two_pi_study(const char* filename,
                                          [&](int s){ return (bh2_lo<=s && s<=bh2_hi); });
     if(bh2_in_4_10) N_BH2_4_10_all++;
 
-    // ---- HTOF 유효 타일 집합
+    // ---- HTOF valid tiles
     std::map<int,double> htofE;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
@@ -206,23 +194,20 @@ void two_pi_study(const char* filename,
     for(auto& kv:htofE) if(kv.second>=thrHTOF) htofValid.insert(kv.first);
     const int htofMult = (int)htofValid.size();
 
-    // ---- reaction 판정(origin==2 존재?) & 원빔 제외용(origin==1)
+    // ---- reaction/beam info from origin
     bool hasForced2Pi=false;
-    if(hasOrigin && vOrigin){
+    if(vOrigin){
       for(int o : *vOrigin){ if(o==2){ hasForced2Pi=true; break; } }
     }
 
-    // (2) no-reaction 집합(=타겟 미도달로 2π 생성 없음)
-    bool isNoReaction = hasOrigin ? (!hasForced2Pi) : false;
+    bool isNoReaction = vOrigin ? (!hasForced2Pi) : false;
     if(isNoReaction){
       N_noReaction++;
       if(bh2_in_4_10) N_BH2_4_10_in_noReaction++;
 
-      // (3) no-reaction 기준 Trig1
       if(bh2_in_4_10 && htofMult>=2) N_trig1_in_noReaction++;
 
-      // (4) no-reaction & 원빔 제외(origin!=1)에서 PDG 히스토그램
-      if(hasPDG && vPDG && vOrigin){
+      if(vPDG && vOrigin){
         int nPim=0, nPip=0, nP=0;
         const size_t ntrk = std::min(vPDG->size(), vOrigin->size());
         for(size_t it=0; it<ntrk; ++it){
@@ -238,7 +223,7 @@ void two_pi_study(const char* filename,
         if(h2_Npim_vs_P     ){ h2_Npim_vs_P     ->Fill(nP,   nPim); }
       }
     }
-  } // end loop
+  } // loop
 
   N_BH2_4_10_reactionOnly = N_BH2_4_10_all - N_BH2_4_10_in_noReaction;
 
@@ -255,7 +240,7 @@ void two_pi_study(const char* filename,
            <<"  ("<<pct(N_trig1_in_noReaction, N_noReaction)<<" % of NoReaction)\n";
 
   // ---- draw/save plots ----
-  if(hasPDG && hNpiMinus){
+  if(hNpiMinus){
     TCanvas* c1=new TCanvas("cNpi","N(pi-) & N(pi+) | no-reaction & no-beam",1000,500);
     c1->Divide(2,1);
     c1->cd(1); hNpiMinus->Draw("hist");
