@@ -123,6 +123,7 @@
         "HTOF_searching_others.C": "cpp",
         "HTOF_trigger_study.C": "cpp",
         "HTOF_2021_study.C": "cpp",
-        "2pi_study.C": "cpp"
+        "2pi_study.C": "cpp",
+        "2pi_study_v2.C": "cpp"
     }
 }

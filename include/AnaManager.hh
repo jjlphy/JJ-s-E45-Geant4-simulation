@@ -298,6 +298,12 @@ private:
   G4ThreeVector m_vertex_pos;
   G4ThreeVector m_debug_pos;
   // --------------------------------
+  // === NEW (jaejin 2025-10-15): minimal event-level truth flags for 2pi study ===
+  int  m_forced2pi_flag    = 0;   // 0: no forced-2pi, 1: forced-2pi occurred
+  int  m_forced2pi_channel = -1;  // -1: n/a, 0: (pi+ pi- n), 1: (pi- pi0 p)
+  int  m_tgt_touch_flag    = 0;   // 0: beam did NOT enter LH2, 1: entered LH2
+  // ==============================================================================
+
 
   // --------------------------------
   // for checking decay particle
@@ -431,6 +437,18 @@ public:
   // for trigger
   void SetFocusParentID(G4int focus_parent_id);
   // --------------------------------
+
+  // === NEW (jaejin 2025-10-15): event-level truth flags for 2pi study ===
+  // setters (called from stepping)
+  void ClearForced2Pi();              // reset 2pi flags to (0, -1)
+  void MarkForced2Pi(int channel);    // set (flag=1, channel=0/1)
+  void MarkTargetTouch();             // set tgt_touch_flag=1
+
+  // getters (used from analysis or other code)
+  int  GetForced2PiFlag() const { return m_forced2pi_flag; }
+  int  GetForced2PiChannel() const { return m_forced2pi_channel; }
+  int  GetTargetTouchFlag() const { return m_tgt_touch_flag; }
+  // =========================================================================
 
   
   int CircleIntersect(double x1, double y1, double r1, double x2, double y2, double r2,

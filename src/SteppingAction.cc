@@ -158,19 +158,31 @@ void Spawn3BodyAt(const G4Track* motherTrack, int channel,
   const auto* outs = (channel==0)? outs0 : outs1;
 
   const double t0 = motherTrack->GetGlobalTime();
+
+   // === AnaManager 접근 ===// Jaejin 25.10.15
+  auto& ana = AnaManager::GetInstance(); // 추가
+
   for(int i=0;i<3;i++){
     const TLorentzVector* d = gen.GetDecay(i);
     auto def = pt->FindParticle(outs[i].name);
+
+    // (A) 자식 트랙을 G4에 올리기
     auto dyn = new G4DynamicParticle(def,
                   G4ThreeVector(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV));
     auto trk = new G4Track(dyn, t0, vtx);
     trk->SetParentID(motherTrack->GetTrackID());
     trk->SetTrackStatus(fAlive);
-
-    // NEW: 출처 태그 부여 (강제 2π 자식)
     trk->SetUserInformation(new OriginTag(EOrigin::kForced2PiChild, channel, outs[i].name));
-
     stackMan->PushOneTrack(trk);
+
+    // (B) **오프라인용 SEC 브랜치에도 즉시 기록** 추가사항
+    //     motherPdg = -211(원빔 pi-), daughterPdg = 현재 자식
+    const int  motherPdg   = -211;
+    const int  daughterPdg = def->GetPDGEncoding();
+    // 4-벡터: TLorentzVector -> G4LorentzVector 로 변환
+    G4LorentzVector p4(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
+    G4LorentzVector v4(vtx, 0.0);
+    ana.SetSecondaryVertex(daughterPdg, motherPdg, p4, v4);  // ★ 핵심 한 줄
   }
 }
 
@@ -319,6 +331,9 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
         {
           const G4ThreeVector vtx = postPoint->GetPosition();
 
+  // ADD: mark that the primary beam actually entered the target
+  gAnaMan.MarkTargetTouch();            // ★★★ 여기 추가 ★★★, jaejin 25.10.15
+
           // 채널 선택
           const int mode = GetForce2PiMode();
           int channel = 0;
@@ -328,6 +343,10 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
 
           auto stackMan = G4EventManager::GetEventManager()->GetStackManager();
           if (stackMan) Spawn3BodyAt(theTrack, channel, vtx, stackMan);
+
+          // ADD: record that we forced a 2π reaction with this channel
+          gAnaMan.MarkForced2Pi(channel);         // ★★★ 여기 추가 ★★★ jaejin 25.10.15
+
 
           // (선택) 이벤트 브랜치에 채널 저장
           // gAnaMan.SetChannelID(channel); // 브랜치 추가 후 활성화

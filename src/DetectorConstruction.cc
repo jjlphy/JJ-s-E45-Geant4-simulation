@@ -138,7 +138,7 @@ DetectorConstruction::Construct()
   ConstructHTOF();
 #endif
 
-#if 1
+#if 0
   ConstructVP();
 #endif
 

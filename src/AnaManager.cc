@@ -153,8 +153,12 @@ AnaManager::BeginOfRunAction(G4int /* runnum */)
       MakeHistogram(sd_name);
     }
   }
+// jaejin 25.10.15 for 2pi Study
+m_tree->Branch("forced2pi_flag",    &m_forced2pi_flag,    "forced2pi_flag/I");
+m_tree->Branch("forced2pi_channel", &m_forced2pi_channel, "forced2pi_channel/I");
+m_tree->Branch("tgt_touch_flag",    &m_tgt_touch_flag,    "tgt_touch_flag/I");
 
-  
+
   //for TPC tracking
   if(gConf.Get<G4bool>("TPCPadOn")){
     m_tree->Branch("nhittpc",&event.nhittpc,"nhittpc/I");
@@ -391,7 +395,12 @@ AnaManager::BeginOfEventAction()
   m_decay_particle_code = 0;
   m_decay_position = G4ThreeVector(-9999.0, -9999.0, -9999.0);
   
-  
+  //jaejin 25.10.15 for 2pi Study
+
+  ClearForced2Pi();      // (flag=0, channel=-1)
+m_tgt_touch_flag = 0;  // 아직 타겟 진입 안 함
+
+
   /* ntrtpc initialization */
   for(G4int i=0; i<MaxHitsTPC;++i){
     event.trpidtpc[i]  = -1;
@@ -2071,3 +2080,18 @@ void initTrack_ku(Track* tracks){
 */
 /*************************************
  *************************************/
+// --- 구현부 (AnaManager.cc 어딘가) ---
+// jaejin 2025-10-15: event-level truth flags helpers
+void AnaManager::ClearForced2Pi(){
+  m_forced2pi_flag    = 0;
+  m_forced2pi_channel = -1;
+}
+
+void AnaManager::MarkForced2Pi(int channel){
+  m_forced2pi_flag    = 1;
+  m_forced2pi_channel = channel; // expect 0 or 1
+}
+
+void AnaManager::MarkTargetTouch(){
+  m_tgt_touch_flag = 1;
+}
