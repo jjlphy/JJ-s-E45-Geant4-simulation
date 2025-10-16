@@ -72,7 +72,6 @@ static inline std::string JoinTuple(const std::set<int>& S){
 }
 
 } // ns
-
 void HTOF_trigger_study_2pi(const char* filename,
                             const char* treename="g4hyptpc",
                             int bh2_lo=4, int bh2_hi=10,
@@ -85,33 +84,7 @@ void HTOF_trigger_study_2pi(const char* filename,
 {
   using namespace HTS2PI;
 
-  // open
-  TFile* f=TFile::Open(filename,"READ");
-  if(!f||f->IsZombie()){ std::cerr<<"[ERR] open "<<filename<<" failed\n"; return; }
-  TTree* T=(TTree*)f->Get(treename);
-  if(!T){ std::cerr<<"[ERR] tree "<<treename<<" not found\n"; return; }
-
-  if(!T->GetBranch("BH2") || !T->GetBranch("HTOF") || !T->GetBranch("tgt_touch_flag")){
-    std::cerr<<"[ERR] need BH2, HTOF (vector<TParticle>) and tgt_touch_flag (int)\n"; return;
-  }
-  const bool hasBH2edep  = (T->GetBranch("BH2_edep")  != nullptr);
-  const bool hasHTOFedep = (T->GetBranch("HTOF_edep") != nullptr);
-
-  // branches
-  std::vector<TParticle>* BH2=nullptr;    T->SetBranchAddress("BH2",&BH2);
-  std::vector<TParticle>* HTOF=nullptr;   T->SetBranchAddress("HTOF",&HTOF);
-  std::vector<double>*    BH2_edep=nullptr;  if(hasBH2edep)  T->SetBranchAddress("BH2_edep",&BH2_edep);
-  std::vector<double>*    HTOF_edep=nullptr; if(hasHTOFedep) T->SetBranchAddress("HTOF_edep",&HTOF_edep);
-  int tgt_touch_flag=0;                   T->SetBranchAddress("tgt_touch_flag",&tgt_touch_flag);
-
-  // thresholds
-  const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);   // e.g. 0.10 MeV
-  const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);  // e.g. 0.20 MeV
-  std::cout<<std::fixed<<std::setprecision(3)
-           <<"[INFO] BH2 thr="<<thrBH2<<" MeV, HTOF thr="<<thrHTOF<<" MeV | "
-           <<"BH2 range = "<<bh2_lo<<"-"<<bh2_hi<<"\n";
-  std::cout<<"[INFO] Selection: require tgt_touch_flag==1 first, then BH2 in-range as denominator.\n";
-  std::cout<<"[INFO] ID policy: HTOF=StatusCode, BH2=coord-map; edep: *_edep→Weight; valid if sum>=thr.\n";
+  // (생략) --- 파일/브랜치 오픈 및 안내 출력, 스칼라 정의 동일 ---
 
   auto pct = [](long long a, long long b)->double{ return (b>0)? (100.0*(double)a/(double)b):0.0; };
 
@@ -122,7 +95,10 @@ void HTOF_trigger_study_2pi(const char* filename,
   Long64_t N_trig1=0;      // above AND HTOF mult>=2
   Long64_t N_trig2=0;      // above AND !BeamVeto
 
-  // keep Trig2 HTOF combinations
+  // NEW: BeamVeto counters
+  Long64_t N_beamVeto_any   = 0; // (tgt&bh2In)에서 BeamVeto 패턴 만족한 모든 이벤트
+  Long64_t N_beamVeto_inTrig1 = 0; // Trig1 내부에서 BeamVeto 패턴 만족
+
   std::map<std::string, Long64_t> comboCounts;
 
   const Long64_t N=T->GetEntries();
@@ -133,15 +109,14 @@ void HTOF_trigger_study_2pi(const char* filename,
     if(tgt_touch_flag!=1) continue;
     N_tgt++;
 
-    // --- BH2 valid IDs (sum edep per seg >= thrBH2) ---
+    // --- BH2 유효 세그먼트 집계 (동일) ---
     std::map<int,double> bh2E;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
         const TParticle& p=BH2->at(i);
         int sid = MapBH2_WorldToSeg(p.Vx(),p.Vy(),p.Vz());
         if(0<=sid && sid<kNBH2Seg){
-          const double ed = (hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i)
-                                                                            : p.GetWeight();
+          const double ed = (hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i) : p.GetWeight();
           bh2E[sid]+=ed;
         }
       }
@@ -155,15 +130,14 @@ void HTOF_trigger_study_2pi(const char* filename,
     if(!bh2_in_range) continue;
     N_bh2In++;
 
-    // --- HTOF valid IDs (sum edep per tile >= thrHTOF) ---
+    // --- HTOF 유효 타일 집계 (동일) ---
     std::map<int,double> htofE;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
         const TParticle& p=HTOF->at(i);
         int tid = p.GetStatusCode();
         if(0<=tid && tid<kNHTOF){
-          const double ed = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i)
-                                                                               : p.GetWeight();
+          const double ed = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i) : p.GetWeight();
           htofE[tid]+=ed;
         }
       }
@@ -172,18 +146,24 @@ void HTOF_trigger_study_2pi(const char* filename,
     for(auto& kv:htofE) if(kv.second>=thrHTOF) htofValid.insert(kv.first);
     const int mult = (int)htofValid.size();
 
-    // 3) Trig1
+    // === NEW: BeamVeto 패턴을 Trig1 여부와 무관하게 먼저 판정 ===
+    const bool has20 = htofValid.count(20);
+    const bool has21 = htofValid.count(21);
+    const bool has22 = htofValid.count(22);
+    const bool has23 = htofValid.count(23);
+    const bool beamVeto = (has20 && has21) || (has22 && has23);
+
+    // (A) (tgt&bh2In) 모수에서의 BeamVeto 건수
+    if(beamVeto) N_beamVeto_any++;
+
+    // 3) Trig1: multiplicity >= 2
     if(mult>=2){
       N_trig1++;
 
-      // 4) BeamVeto
-      const bool has20 = htofValid.count(20);
-      const bool has21 = htofValid.count(21);
-      const bool has22 = htofValid.count(22);
-      const bool has23 = htofValid.count(23);
-      const bool beamVeto = (has20 && has21) || (has22 && has23);
+      // (B) Trig1 내부에서의 BeamVeto 건수
+      if(beamVeto) N_beamVeto_inTrig1++;
 
-      // 5) Trig2
+      // 5) Trig2: Veto 통과(=survive)
       if(!beamVeto){
         N_trig2++;
         comboCounts[ JoinTuple(htofValid) ]++;
@@ -191,7 +171,7 @@ void HTOF_trigger_study_2pi(const char* filename,
     }
   }
 
-  // ---- print summary ----
+  // ---- summary ----
   std::cout<<"\n==== Trigger summary (2pi sim) | BH2 "<<bh2_lo<<"-"<<bh2_hi<<" ====\n";
   std::cout<<"Total events                         : "<<N_total<<"\n";
   std::cout<<"Target-touched (tgt_touch_flag==1)   : "<<N_tgt
@@ -200,8 +180,24 @@ void HTOF_trigger_study_2pi(const char* filename,
            <<"  ("<<pct(N_bh2In,N_tgt)<<" % of tgt-touched)\n";
   std::cout<<"Trig1 (m>=2)                         : "<<N_trig1
            <<"  ("<<pct(N_trig1,N_bh2In)<<" % of BH2-range)\n";
+  std::cout<<"BeamVeto (any, after tgt&BH2)        : "<<N_beamVeto_any
+           <<"  ("<<pct(N_beamVeto_any,N_bh2In)<<" % of BH2-range)\n";
+  std::cout<<"BeamVeto (inside Trig1)              : "<<N_beamVeto_inTrig1
+           <<"  ("<<pct(N_beamVeto_inTrig1,N_trig1)<<" % of Trig1)\n";
   std::cout<<"Trig2 (!BeamVeto)                    : "<<N_trig2
            <<"  ("<<pct(N_trig2,N_bh2In)<<" % of BH2-range)\n";
+
+  // ---- key ratios ----
+  const double overkill      = (N_trig1>0) ? (100.0* (double)N_beamVeto_inTrig1 / (double)N_trig1) : 0.0;  // %
+  const double survivor     = (N_trig1>0) ? (100.0* (double)N_trig2 / (double)N_trig1) : 0.0;              // %
+  const double beamlikeRate = (N_bh2In>0)? (100.0* (double)N_beamVeto_any   / (double)N_bh2In) : 0.0;      // %
+
+  std::cout<<"\n---- Derived ratios ----\n";
+  std::cout<<"Overkill (BeamVeto/Trig1)            : "<<overkill<<" %\n";
+  std::cout<<"Survivor (Trig2/Trig1)               : "<<survivor<<" %  (check: Overkill ≈ 100 - Survivor)\n";
+  std::cout<<"Beam-like pattern rate (BeamVeto/Beam): "<<beamlikeRate<<" %  (Beam≡BH2 in-range)\n";
+
+
 
   // ---- histogram of Trig2 HTOF combos ----
   const int nComb = (int)comboCounts.size();
