@@ -72,32 +72,58 @@ static inline std::string JoinTuple(const std::set<int>& S){
 }
 
 } // ns
+
 void HTOF_trigger_study_2pi(const char* filename,
-                            const char* treename="g4hyptpc",
-                            int bh2_lo=4, int bh2_hi=10,
-                            double mipFrac=0.1,
-                            double mipMeVperCm=2.0,
-                            double BH2_thickness_mm=5.0,
-                            double HTOF_thickness_mm=10.0,
-                            bool save=true,
-                            const char* tag="BH2_4_10")
+                            const char* treename/*="g4hyptpc"*/,
+                            int bh2_lo/*=4*/, int bh2_hi/*=10*/,
+                            double mipFrac/*=0.1*/,
+                            double mipMeVperCm/*=2.0*/,
+                            double BH2_thickness_mm/*=5.0*/,
+                            double HTOF_thickness_mm/*=10.0*/,
+                            bool save/*=true*/,
+                            const char* tag/*="BH2_4_10"*/)
 {
   using namespace HTS2PI;
 
-  // (생략) --- 파일/브랜치 오픈 및 안내 출력, 스칼라 정의 동일 ---
+  // ---- open file & tree ----
+  TFile* f=TFile::Open(filename,"READ");
+  if(!f||f->IsZombie()){ std::cerr<<"[ERR] open "<<filename<<" failed\n"; return; }
+  TTree* T=(TTree*)f->Get(treename);
+  if(!T){ std::cerr<<"[ERR] tree "<<treename<<" not found\n"; return; }
+
+  if(!T->GetBranch("BH2") || !T->GetBranch("HTOF") || !T->GetBranch("tgt_touch_flag")){
+    std::cerr<<"[ERR] need BH2, HTOF (vector<TParticle>) and tgt_touch_flag (int)\n"; return;
+  }
+  const bool hasBH2edep  = (T->GetBranch("BH2_edep")  != nullptr);
+  const bool hasHTOFedep = (T->GetBranch("HTOF_edep") != nullptr);
+
+  // ---- set branches ----
+  std::vector<TParticle>* BH2=nullptr;      T->SetBranchAddress("BH2",&BH2);
+  std::vector<TParticle>* HTOF=nullptr;     T->SetBranchAddress("HTOF",&HTOF);
+  std::vector<double>*    BH2_edep=nullptr; if(hasBH2edep)  T->SetBranchAddress("BH2_edep",&BH2_edep);
+  std::vector<double>*    HTOF_edep=nullptr;if(hasHTOFedep) T->SetBranchAddress("HTOF_edep",&HTOF_edep);
+  int tgt_touch_flag=0;                     T->SetBranchAddress("tgt_touch_flag",&tgt_touch_flag);
+
+  // ---- thresholds ----
+  const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);   // e.g. 0.10 MeV
+  const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);  // e.g. 0.20 MeV
+
+  std::cout<<std::fixed<<std::setprecision(3)
+           <<"[INFO] BH2 thr="<<thrBH2<<" MeV, HTOF thr="<<thrHTOF<<" MeV | "
+           <<"BH2 range = "<<bh2_lo<<"-"<<bh2_hi<<"\n";
+  std::cout<<"[INFO] Selection: require tgt_touch_flag==1 first, then BH2 in-range as denominator.\n";
+  std::cout<<"[INFO] ID policy: HTOF=StatusCode, BH2=coord-map; edep: *_edep→Weight; valid if sum>=thr.\n";
 
   auto pct = [](long long a, long long b)->double{ return (b>0)? (100.0*(double)a/(double)b):0.0; };
 
-  // counters
+  // ---- counters ----
   Long64_t N_total=0;
   Long64_t N_tgt=0;        // tgt_touch_flag==1
   Long64_t N_bh2In=0;      // tgt_touch==1 AND BH2 in-range
   Long64_t N_trig1=0;      // above AND HTOF mult>=2
   Long64_t N_trig2=0;      // above AND !BeamVeto
-
-  // NEW: BeamVeto counters
-  Long64_t N_beamVeto_any   = 0; // (tgt&bh2In)에서 BeamVeto 패턴 만족한 모든 이벤트
-  Long64_t N_beamVeto_inTrig1 = 0; // Trig1 내부에서 BeamVeto 패턴 만족
+  Long64_t N_beamVeto_any=0;      // after (tgt&BH2)
+  Long64_t N_beamVeto_inTrig1=0;  // inside Trig1
 
   std::map<std::string, Long64_t> comboCounts;
 
@@ -105,11 +131,11 @@ void HTOF_trigger_study_2pi(const char* filename,
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie); N_total++;
 
-    // 1) require target touch
+    // 1) target touch
     if(tgt_touch_flag!=1) continue;
     N_tgt++;
 
-    // --- BH2 유효 세그먼트 집계 (동일) ---
+    // --- BH2 valid IDs ---
     std::map<int,double> bh2E;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
@@ -124,13 +150,13 @@ void HTOF_trigger_study_2pi(const char* filename,
     std::set<int> bh2Valid;
     for(auto& kv:bh2E) if(kv.second>=thrBH2) bh2Valid.insert(kv.first);
 
-    // 2) require BH2 in [lo,hi]
+    // 2) BH2 in [lo,hi]
     bool bh2_in_range=false;
     for(int s:bh2Valid){ if(bh2_lo<=s && s<=bh2_hi){ bh2_in_range=true; break; } }
     if(!bh2_in_range) continue;
     N_bh2In++;
 
-    // --- HTOF 유효 타일 집계 (동일) ---
+    // --- HTOF valid IDs ---
     std::map<int,double> htofE;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
@@ -146,24 +172,21 @@ void HTOF_trigger_study_2pi(const char* filename,
     for(auto& kv:htofE) if(kv.second>=thrHTOF) htofValid.insert(kv.first);
     const int mult = (int)htofValid.size();
 
-    // === NEW: BeamVeto 패턴을 Trig1 여부와 무관하게 먼저 판정 ===
+    // BeamVeto pattern (independent of Trig1)
     const bool has20 = htofValid.count(20);
     const bool has21 = htofValid.count(21);
     const bool has22 = htofValid.count(22);
     const bool has23 = htofValid.count(23);
     const bool beamVeto = (has20 && has21) || (has22 && has23);
 
-    // (A) (tgt&bh2In) 모수에서의 BeamVeto 건수
     if(beamVeto) N_beamVeto_any++;
 
-    // 3) Trig1: multiplicity >= 2
+    // 3) Trig1
     if(mult>=2){
       N_trig1++;
-
-      // (B) Trig1 내부에서의 BeamVeto 건수
       if(beamVeto) N_beamVeto_inTrig1++;
 
-      // 5) Trig2: Veto 통과(=survive)
+      // 5) Trig2: survive
       if(!beamVeto){
         N_trig2++;
         comboCounts[ JoinTuple(htofValid) ]++;
@@ -193,11 +216,9 @@ void HTOF_trigger_study_2pi(const char* filename,
   const double beamlikeRate = (N_bh2In>0)? (100.0* (double)N_beamVeto_any   / (double)N_bh2In) : 0.0;      // %
 
   std::cout<<"\n---- Derived ratios ----\n";
-  std::cout<<"Overkill (BeamVeto/Trig1)            : "<<overkill<<" %\n";
-  std::cout<<"Survivor (Trig2/Trig1)               : "<<survivor<<" %  (check: Overkill ≈ 100 - Survivor)\n";
+  std::cout<<"Overkill (BeamVeto/Trig1)             : "<<overkill<<" %\n";
+  std::cout<<"Survivor (Trig2/Trig1)                : "<<survivor<<" %  (check: Overkill ≈ 100 - Survivor)\n";
   std::cout<<"Beam-like pattern rate (BeamVeto/Beam): "<<beamlikeRate<<" %  (Beam≡BH2 in-range)\n";
-
-
 
   // ---- histogram of Trig2 HTOF combos ----
   const int nComb = (int)comboCounts.size();
