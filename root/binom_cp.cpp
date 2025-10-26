@@ -32,12 +32,12 @@ int main(int argc, char** argv){
         return 0;
     }
 
-    const double alpha = 1.0 - CL;
+    //const double alpha = 1.0 - CL;
     const double phat  = static_cast<double>(k) / static_cast<double>(n);
 
-    // Exact (Clopper–Pearson) interval via ROOT
-    const double lower = TEfficiency::ClopperPearson(static_cast<int>(n), static_cast<int>(k), alpha, /*upper=*/false);
-    const double upper = TEfficiency::ClopperPearson(static_cast<int>(n), static_cast<int>(k), alpha, /*upper=*/true);
+   // Exact (Clopper–Pearson) interval via ROOT
+   const double lower = TEfficiency::ClopperPearson(static_cast<int>(n), static_cast<int>(k), CL, /*upper=*/false);
+   const double upper = TEfficiency::ClopperPearson(static_cast<int>(n), static_cast<int>(k), CL, /*upper=*/true);
 
     const double err_minus = phat - lower;
     const double err_plus  = upper - phat;

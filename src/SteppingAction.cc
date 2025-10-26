@@ -3,12 +3,13 @@
 // - 강제 2π 생성 모드(옵션) + 채널 선택(0/1/2)을 conf/환경변수로 런타임 반영
 // - 원빔/자식 출처 태깅: OriginTag 적용 (kPrimaryBeam / kForced2PiChild)
 // - (하위호환) SimpleTag("UPSTREAM_HELPER")도 fallback으로 인식
-// jaejin 2025-10-13: Spawn3BodyAt에서 자식들에 OriginTag 부여,
-//                    IsPrimaryBeamLike() 공통화, 로직 안전성/가독성 개선.
+// - 2025-10-24: σ 불요 "트랙-균일" 방식 도입
+//               (진입→LH2 내부에서 길이-가중 리저버 샘플링→이탈 시 1회 Spawn)
+//               + 후보 지점 모멘텀(pcand)·시간(tcand) 저장 → √s/시간 일치
+// ============================================================================
 
 #include "SteppingAction.hh"
 
-#include <unordered_map>
 #include <string>
 #include <cmath>    // std::hypot
 #include <cstdlib>  // std::getenv
@@ -104,89 +105,78 @@ namespace
     return (trk->GetParentID()==0 && pdg==-211);
   }
 
+  // ------------------------- helper: 3-body spawner (p override) ------------
+  // channel=0 : pi+ pi- n   , channel=1 : pi- pi0 p
+  void Spawn3BodyAtWithP(const G4ThreeVector& p_override,
+                         const G4Track* motherTrack, int channel,
+                         const G4ThreeVector& vtx, G4StackManager* stackMan,
+                         G4double t_override = -1.0)
+  {
+    using namespace CLHEP;
+
+    auto pt = G4ParticleTable::GetParticleTable();
+    const double mPim = pt->FindParticle("pi-")->GetPDGMass()/GeV;
+    const double mPip = pt->FindParticle("pi+")->GetPDGMass()/GeV;
+    const double mPi0 = pt->FindParticle("pi0")->GetPDGMass()/GeV;
+    const double mN   = pt->FindParticle("neutron")->GetPDGMass()/GeV;
+    const double mP   = pt->FindParticle("proton")->GetPDGMass()/GeV;
+
+    const double pGeV = p_override.mag()/GeV;
+    TLorentzVector LVpi ( p_override.x()/GeV, p_override.y()/GeV, p_override.z()/GeV,
+                          std::hypot(pGeV, mPim) );
+    TLorentzVector LVpro( 0.,0.,0., mP );
+    TLorentzVector W = LVpi + LVpro;
+
+    double masses[3];
+    if(channel==0){ masses[0]=mPip; masses[1]=mPim; masses[2]=mN; }
+    else          { masses[0]=mPim; masses[1]=mPi0; masses[2]=mP; }
+
+    if(W.M() <= masses[0] + masses[1] + masses[2]) return;
+
+    TGenPhaseSpace gen;
+    gen.SetDecay(W, 3, masses);
+    gen.Generate(); // unbiased single sample
+
+    struct Out { const char* name; } outs0[3]={{"pi+"},{"pi-"},{"neutron"}};
+    struct Out  outs1[3]={{"pi-"},{"pi0"},{"proton"}};
+    const auto* outs = (channel==0)? outs0 : outs1;
+
+    const double t0 = (t_override>=0.0) ? t_override : motherTrack->GetGlobalTime();
+
+    auto& ana = AnaManager::GetInstance();
+    for(int i=0;i<3;i++){
+      const TLorentzVector* d = gen.GetDecay(i);
+      auto def = pt->FindParticle(outs[i].name);
+
+      // (A) 자식 트랙을 G4에 올리기
+      auto dyn = new G4DynamicParticle(def,
+                    G4ThreeVector(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV));
+      auto trk = new G4Track(dyn, t0, vtx);
+      trk->SetParentID(motherTrack->GetTrackID());
+      trk->SetTrackStatus(fAlive);
+      trk->SetUserInformation(new OriginTag(EOrigin::kForced2PiChild, channel, outs[i].name));
+      stackMan->PushOneTrack(trk);
+
+      // (B) 오프라인용 SEC 브랜치에도 즉시 기록
+      const int  motherPdg   = -211;
+      const int  daughterPdg = def->GetPDGEncoding();
+      G4LorentzVector p4(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
+      G4LorentzVector v4(vtx, 0.0);
+      ana.SetSecondaryVertex(daughterPdg, motherPdg, p4, v4);
+    }
+  }
+
 } // namespace
 
-//_____________________________________________________________________________
+// ============================================================================
+
 SteppingAction::SteppingAction()
   : G4UserSteppingAction()
 {
-  // conf 반영 여부를 눈으로 확인
   PrintForce2PiModeOnce();
 }
 
-SteppingAction::~SteppingAction()
-{
-}
-
-// ------------------------- helper: 3-body spawner ---------------------------
-// channel=0 : pi+ pi- n   , channel=1 : pi- pi0 p
-namespace {
-
-// jaejin 2025-10-13: Spawn3BodyAt에서 생성 자식에 OriginTag(kForced2PiChild)를 부여.
-//                    name/채널 저장으로 오프라인 필터가 쉬워진다.
-void Spawn3BodyAt(const G4Track* motherTrack, int channel,
-                  const G4ThreeVector& vtx, G4StackManager* stackMan)
-{
-  using namespace CLHEP;
-
-  const G4ThreeVector p3 = motherTrack->GetMomentum(); // Geant4 unit
-
-  auto pt = G4ParticleTable::GetParticleTable();
-  const double mPim = pt->FindParticle("pi-")->GetPDGMass()/GeV;
-  const double mPip = pt->FindParticle("pi+")->GetPDGMass()/GeV;
-  const double mPi0 = pt->FindParticle("pi0")->GetPDGMass()/GeV;
-  const double mN   = pt->FindParticle("neutron")->GetPDGMass()/GeV;
-  const double mP   = pt->FindParticle("proton")->GetPDGMass()/GeV;
-
-  const double pGeV = p3.mag()/GeV;
-  TLorentzVector LVpi ( p3.x()/GeV, p3.y()/GeV, p3.z()/GeV, std::hypot(pGeV, mPim) );
-  TLorentzVector LVpro( 0.,0.,0., mP );
-  TLorentzVector W = LVpi + LVpro;
-
-  double masses[3];
-  if(channel==0){ masses[0]=mPip; masses[1]=mPim; masses[2]=mN; }
-  else          { masses[0]=mPim; masses[1]=mPi0; masses[2]=mP; }
-
-  if(W.M() <= masses[0] + masses[1] + masses[2]) return;
-
-  TGenPhaseSpace gen;
-  gen.SetDecay(W, 3, masses);
-  gen.Generate(); // unbiased single sample
-
-  struct Out { const char* name; } outs0[3]={{"pi+"},{"pi-"},{"neutron"}};
-  struct Out  outs1[3]={{"pi-"},{"pi0"},{"proton"}};
-  const auto* outs = (channel==0)? outs0 : outs1;
-
-  const double t0 = motherTrack->GetGlobalTime();
-
-   // === AnaManager 접근 ===// Jaejin 25.10.15
-  auto& ana = AnaManager::GetInstance(); // 추가
-
-  for(int i=0;i<3;i++){
-    const TLorentzVector* d = gen.GetDecay(i);
-    auto def = pt->FindParticle(outs[i].name);
-
-    // (A) 자식 트랙을 G4에 올리기
-    auto dyn = new G4DynamicParticle(def,
-                  G4ThreeVector(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV));
-    auto trk = new G4Track(dyn, t0, vtx);
-    trk->SetParentID(motherTrack->GetTrackID());
-    trk->SetTrackStatus(fAlive);
-    trk->SetUserInformation(new OriginTag(EOrigin::kForced2PiChild, channel, outs[i].name));
-    stackMan->PushOneTrack(trk);
-
-    // (B) **오프라인용 SEC 브랜치에도 즉시 기록** 추가사항
-    //     motherPdg = -211(원빔 pi-), daughterPdg = 현재 자식
-    const int  motherPdg   = -211;
-    const int  daughterPdg = def->GetPDGEncoding();
-    // 4-벡터: TLorentzVector -> G4LorentzVector 로 변환
-    G4LorentzVector p4(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
-    G4LorentzVector v4(vtx, 0.0);
-    ana.SetSecondaryVertex(daughterPdg, motherPdg, p4, v4);  // ★ 핵심 한 줄
-  }
-}
-
-} // namespace
+SteppingAction::~SteppingAction() {}
 
 // ----------------------------------------------------------------------------
 
@@ -218,7 +208,7 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   G4ThreeVector stepMiddlePosition =
       (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
 
-  const bool isPrimaryBeam = (parentID==0 && particlePdg==-211); // backup 정의
+  const bool isPrimaryBeam = (parentID==0 && particlePdg==-211); // backup 정의 (사용은 IsPrimaryBeamLike 우선)
 
   // --------- (원본 코드) 지표 수집/기존 기능 ---------
   if (prePVName == "TargetPV") {
@@ -305,7 +295,7 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     }
   }
 
-  // (B) 타겟 첫 진입에서 3체 생성 후 원빔 kill
+  // (B') 타겟 첫 진입: 리저버 초기화(즉시 spawn 없음)
   {
     if (IsPrimaryBeamLike(theTrack)) {
       auto postPV = postPoint->GetPhysicalVolume();
@@ -329,30 +319,91 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
 
         if (enterLH2 || enterTargetLike)
         {
-          const G4ThreeVector vtx = postPoint->GetPosition();
+          gAnaMan.MarkTargetTouch(); // 통계
 
-  // ADD: mark that the primary beam actually entered the target
-  gAnaMan.MarkTargetTouch();            // ★★★ 여기 추가 ★★★, jaejin 25.10.15
+          const auto tid = theTrack->GetTrackID();
+          auto &st = m_uat[tid];
+          st.active  = true;
+          st.hasCand = false;
+          st.S       = 0.0;
+          // 즉시 생성/kill 하지 않음: 이탈 시점에 한 번만 생성
+        }
+      }
+    }
+  }
 
-          // 채널 선택
-          const int mode = GetForce2PiMode();
-          int channel = 0;
-          if      (mode == 0) channel = 0;
-          else if (mode == 1) channel = 1;
-          else                channel = (G4UniformRand()<0.5)? 0 : 1;  // 1:1
+  // (B'') LH2 내부 스텝마다 후보 버텍스/모멘텀 갱신 (길이-가중 리저버)
+  {
+    if (IsPrimaryBeamLike(theTrack)) {
+      const G4Material* postMat = postPoint->GetMaterial();
+      const auto postMatName = postMat ? postMat->GetName() : "";
+      const bool inLH2_now = (postMatName=="LH2");
 
-          auto stackMan = G4EventManager::GetEventManager()->GetStackManager();
-          if (stackMan) Spawn3BodyAt(theTrack, channel, vtx, stackMan);
+      const auto tid = theTrack->GetTrackID();
+      auto it  = m_uat.find(tid);
+      if (inLH2_now && it!=m_uat.end() && it->second.active) {
+        auto &st = it->second;
+        const double ell = theTrack->GetStepLength();
+        if (ell > 0.0) {
+          st.S += ell;
+          // 확률 ell/S 로 이번 스텝을 후보로 채택 (리저버 샘플링)
+          if (G4UniformRand() < (ell / st.S)) {
+            const double u = G4UniformRand();
 
-          // ADD: record that we forced a 2π reaction with this channel
-          gAnaMan.MarkForced2Pi(channel);         // ★★★ 여기 추가 ★★★ jaejin 25.10.15
+            // 위치 보간
+            const auto xpre  = prePoint ->GetPosition();
+            const auto xpost = postPoint->GetPosition();
+            st.vtx = xpre + u*(xpost - xpre);
 
+            // ★ 모멘텀 보간 (후보 지점 p 저장)
+            const auto ppre  = prePoint ->GetMomentum();
+            const auto ppost = postPoint->GetMomentum();
+            st.pcand = ppre + u*(ppost - ppre);
 
-          // (선택) 이벤트 브랜치에 채널 저장
-          // gAnaMan.SetChannelID(channel); // 브랜치 추가 후 활성화
+            // (선택) 시간 보간
+            const auto tpre  = prePoint ->GetGlobalTime();
+            const auto tpost = postPoint->GetGlobalTime();
+            st.tcand = tpre + u*(tpost - tpre);
 
-          theTrack->SetTrackStatus(fStopAndKill); // 원빔 제거
-          return;
+            st.hasCand = true;
+          }
+        }
+      }
+    }
+  }
+
+  // (B''') LH2 이탈 시 단 한 번 spawn(후보 지점 p,vtx,t) 하고 원빔 kill
+  {
+    if (IsPrimaryBeamLike(theTrack)) {
+      const G4Material* preMat  = prePoint ->GetMaterial();
+      const G4Material* postMat = postPoint->GetMaterial();
+      const auto preMatName  = preMat  ? preMat ->GetName() : "";
+      const auto postMatName = postMat ? postMat->GetName() : "";
+      const bool leaveLH2 =
+        (preMatName=="LH2") && (postMatName!="LH2") &&
+        (postPoint->GetStepStatus()==fGeomBoundary);
+
+      if (leaveLH2) {
+        const auto tid = theTrack->GetTrackID();
+        auto it  = m_uat.find(tid);
+        if (it!=m_uat.end() && it->second.active) {
+          auto &st = it->second;
+
+          if (st.hasCand) {
+            // 채널 선택
+            const int mode = GetForce2PiMode();
+            int channel = (mode==0)?0 : (mode==1)?1 : (G4UniformRand()<0.5?0:1);
+
+            auto* stackMan = G4EventManager::GetEventManager()->GetStackManager();
+            if (stackMan) {
+              Spawn3BodyAtWithP(st.pcand, theTrack, channel, st.vtx, stackMan, st.tcand);
+            }
+
+            gAnaMan.MarkForced2Pi(channel);
+            theTrack->SetTrackStatus(fStopAndKill); // 원빔 제거
+          }
+          m_uat.erase(it); // 상태 정리
+          return; // 생성/kill 후 조기 종료
         }
       }
     }
