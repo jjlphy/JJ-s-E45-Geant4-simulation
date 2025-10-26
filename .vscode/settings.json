@@ -128,6 +128,7 @@
         "2pi_study_v3.C": "cpp",
         "HTOF_trigger_study_2pi.C": "cpp",
         "HTOF_Hitpattern_10_26.C": "cpp",
-        "HTOF_pair_10_26.C": "cpp"
+        "HTOF_pair_10_26.C": "cpp",
+        "HTOF_pair_2pi_10_26.C": "cpp"
     }
 }
