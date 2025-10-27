@@ -23,4 +23,3 @@
 /vis/viewer/set/viewpointThetaPhi 269.999 -90.
 /run/beamOn 1
 /vis/scene/notifyHandlers scene-0
-/run/beamOn 100
