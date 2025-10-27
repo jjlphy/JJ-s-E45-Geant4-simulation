@@ -17,30 +17,18 @@
 //   - Branch:
 //       vector<TParticle> BH2, HTOF   (필수)
 //       vector<double>   BH2_edep, HTOF_edep (있으면 사용; 없으면 TParticle::Weight())
-//   - BH2 seg ID 매핑: E72-like (x좌표→seg). (원 매크로와 동일)
+//   - BH2 seg ID 매핑: E72-like (x좌표→seg).
 //   - VALID HTOF hit: 타일별 ΣEdep ≥ threshold
 //   - HTOF multiplicity: VALID 타일의 개수(입자종 구분 없이 union)
-//   - 타겟 도달 여부는 별도 컷 없이, BH2 조건만 사용(요청사항 기준).
 //
 // 사용법(예):
 //   root -l
 //   .L HTOF_2D_Hitpattern_10_28.C+
-//   HTOF_2D_Hitpattern_10_28("../rootfile/E45_Nov_piplusn_098.root","g4hyptpc", /*bh2_lo=*/4, /*bh2_hi=*/10, /*mipFrac=*/0.10, /*mipMeVperCm=*/2.0,/*BH2_thk_mm=*/5.0, /*HTOF_thk_mm=*/10.0,/*save=*/true, /*tag=*/"BH2_4_10");
-//       "E45.root","g4hyptpc",
+//   HTOF_2D_Hitpattern_10_28("../rootfile/E45_Nov_piplusn_098.root","g4hyptpc",
 //       /*bh2_lo=*/4, /*bh2_hi=*/10,
 //       /*mipFrac=*/0.10, /*mipMeVperCm=*/2.0,
 //       /*BH2_thk_mm=*/5.0, /*HTOF_thk_mm=*/10.0,
 //       /*save=*/true, /*tag=*/"BH2_4_10");
-//
-// 출력 파일(저장 옵션 true일 때):
-//   HTOF_2D_pip_vs_pim_BH2_<tag>.png
-//   HTOF_2D_pip_vs_pim_BH2_MPge2_<tag>.png
-//   HTOF_2D_p_vs_pbar_BH2_<tag>.png
-//   HTOF_2D_p_vs_pbar_BH2_MPge2_<tag>.png
-//   HTOF_2D_pip_vs_p_BH2_<tag>.png
-//   HTOF_2D_pip_vs_p_BH2_MPge2_<tag>.png
-//   HTOF_1D_piOcc_BH2_<tag>.png
-//   HTOF_1D_piOcc_BH2_MPge2_<tag>.png
 
 #include "TFile.h"
 #include "TTree.h"
@@ -52,6 +40,8 @@
 #include "TParticle.h"
 #include "TString.h"
 #include "TLegend.h"
+#include "TStyle.h"
+#include "TPad.h"
 #include <vector>
 #include <map>
 #include <set>
@@ -224,11 +214,11 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
 
     // VALID 타일 집합
     std::set<int> tiles_all, tiles_pip, tiles_pim, tiles_p, tiles_pbar;
-    for(const auto& kv: E_tile_all) if(kv.second >= thrHTOF) tiles_all.insert(kv.first);
-    for(const auto& kv: E_tile_pip) if(kv.second >= thrHTOF) tiles_pip.insert(kv.first);
-    for(const auto& kv: E_tile_pim) if(kv.second >= thrHTOF) tiles_pim.insert(kv.first);
-    for(const auto& kv: E_tile_p  ) if(kv.second >= thrHTOF) tiles_p  .insert(kv.first);
-    for(const auto& kv: E_tile_pbar)if(kv.second >= thrHTOF) tiles_pbar.insert(kv.first);
+    for(const auto& kv: E_tile_all)  if(kv.second >= thrHTOF) tiles_all.insert(kv.first);
+    for(const auto& kv: E_tile_pip)  if(kv.second >= thrHTOF) tiles_pip.insert(kv.first);
+    for(const auto& kv: E_tile_pim)  if(kv.second >= thrHTOF) tiles_pim.insert(kv.first);
+    for(const auto& kv: E_tile_p  )  if(kv.second >= thrHTOF) tiles_p  .insert(kv.first);
+    for(const auto& kv: E_tile_pbar) if(kv.second >= thrHTOF) tiles_pbar.insert(kv.first);
 
     const int mp_all = (int)tiles_all.size();
 
@@ -271,18 +261,48 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
   std::cout<<"BH2 in range & HTOF MP>=2    : "<<N_bh2In_mpge2
            <<"  ("<<std::setprecision(3)<<pct(N_bh2In_mpge2,N_bh2In)<<" % of BH2-selected)\n";
 
-  // ---------------- Draw ----------------
+  // ---------------- Axis label helpers (작게) ----------------
+  auto setTileLabels2D = [&](TH2I* h){
+    auto *xa = h->GetXaxis();
+    auto *ya = h->GetYaxis();
+    for(int b=1;b<=NT;++b){
+      xa->SetBinLabel(b, Form("%d", b-1));
+      ya->SetBinLabel(b, Form("%d", b-1));
+    }
+    xa->SetNdivisions(NT, false);
+    ya->SetNdivisions(NT, false);
+    // 라벨/제목 사이즈 다운
+    xa->SetLabelSize(0.020);
+    ya->SetLabelSize(0.020);
+    xa->SetTitleSize(0.030);
+    ya->SetTitleSize(0.030);
+    // 여백 약간 늘림
+    gPad->SetLeftMargin(0.12);
+    gPad->SetBottomMargin(0.12);
+  };
+
+  auto setTileLabels1D = [&](TH1I* h){
+    auto *xa = h->GetXaxis();
+    for(int b=1;b<=NT;++b)
+      xa->SetBinLabel(b, Form("%d", b-1));
+    xa->SetNdivisions(NT, false);
+    xa->SetLabelSize(0.022);
+    xa->SetTitleSize(0.035);
+    gPad->SetBottomMargin(0.12);
+  };
+
+  // ---------------- Draw & Save ----------------
   auto drawAndSave2D = [&](TH2I* h, const char* cname, const char* fname){
-    TCanvas* c = new TCanvas(cname, cname, 800, 700);
+    TCanvas* c = new TCanvas(cname, cname, 880, 760);
     h->SetStats(0);
-    h->GetXaxis()->SetNdivisions(34,false);
-    h->GetYaxis()->SetNdivisions(34,false);
+    setTileLabels2D(h);   // ← 캔버스 생성 후 라벨/폰트 적용
     h->Draw("COLZ");
     if(save) c->SaveAs(fname);
   };
   auto drawAndSave1D = [&](TH1I* h, const char* cname, const char* fname){
-    TCanvas* c = new TCanvas(cname, cname, 900, 350);
+    TCanvas* c = new TCanvas(cname, cname, 980, 380);
     h->SetStats(0); h->SetLineWidth(2);
+    setTileLabels1D(h);   // ← 캔버스 생성 후 라벨/폰트 적용
     h->Draw("hist");
     if(save) c->SaveAs(fname);
   };
