@@ -7,15 +7,6 @@
 //   (13,14), (14,15), (15,16), (16,17), (17,18), (18,19), (19,20),
 //   (20,21), (21,22), (22,23), (23,24), (24,25), (25,26)
 //
-// Usage:
-//   root -l
-//   .L HTOF_pair_10_26.C+
-//   HTOF_pair_10_26("E45.root","g4hyptpc",
-//                   /*bh2_lo=*/4, /*bh2_hi=*/10,
-//                   /*mipFrac=*/0.10, /*mipMeVperCm=*/2.0,
-//                   /*BH2_thk_mm=*/5.0, /*HTOF_thk_mm=*/10.0,
-//                   /*save=*/true, /*tag=*/"BH2_4_10");
-//
 // Notes / Policies:
 //   - HTOF tile ID = TParticle::StatusCode() (copy-no written in SD)
 //   - VALID hit: sum(edep) >= threshold (use *_edep if exists else Weight())
@@ -225,16 +216,25 @@ void HTOF_pair_10_26(const char* filename="E45.root",
   std::cout<<"Total events            : "<<N_total<<"\n";
   std::cout<<"BH2 in range (selected) : "<<N_bh2In<<"\n";
 
-  std::cout<<"HTOF multiplicity >= 2  : "<<N_mp_ge2<<"  ("<<std::setprecision(3)<<pct(N_mp_ge2,N_bh2In)<<" % of BH2-selected)\n";
+  std::cout<<std::setprecision(3);
+  std::cout<<"HTOF multiplicity >= 2  : "<<N_mp_ge2<<"  ("<<pct(N_mp_ge2,N_bh2In)<<" % of BH2-selected)\n";
   for(int ip=0; ip<NP; ++ip){
-    std::cout<<"  Pair "<<std::setw(2)<<pairs[ip].first<<","<<std::setw(2)<<pairs[ip].second
-             <<" : "<<pairCnt_ge2[ip]<<"\n";
+    const auto& pr = pairs[ip];
+    const long long n = pairCnt_ge2[ip];
+    const double p_mp2 = pct(n, N_mp_ge2);
+    const double p_bh2 = pct(n, N_bh2In);
+    std::cout<<"  Pair "<<std::setw(2)<<pr.first<<","<<std::setw(2)<<pr.second
+             <<" : "<<n<<"  ("<<p_mp2<<" % of MP>=2, "<<p_bh2<<" % of BH2-selected)\n";
   }
 
   std::cout<<"HTOF multiplicity >  2  : "<<N_mp_gt2<<"  ("<<pct(N_mp_gt2,N_bh2In)<<" % of BH2-selected)\n";
   for(int ip=0; ip<NP; ++ip){
-    std::cout<<"  Pair "<<std::setw(2)<<pairs[ip].first<<","<<std::setw(2)<<pairs[ip].second
-             <<" : "<<pairCnt_gt2[ip]<<"\n";
+    const auto& pr = pairs[ip];
+    const long long n = pairCnt_gt2[ip];
+    const double p_mp3 = pct(n, N_mp_gt2); // MP>2 모임 대비
+    const double p_bh2 = pct(n, N_bh2In);  // BH2-selected 대비
+    std::cout<<"  Pair "<<std::setw(2)<<pr.first<<","<<std::setw(2)<<pr.second
+             <<" : "<<n<<"  ("<<p_mp3<<" % of MP>2, "<<p_bh2<<" % of BH2-selected)\n";
   }
 
   // ---------------- Draw (optional) ----------------
