@@ -216,6 +216,8 @@ PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
   case 7218: GenerateE45_2PiN_PipPim_n_PhaseSpace(anEvent); break; // π+ π− n
   case 7219: GenerateE45_2PiN_PimPi0_p_PhaseSpace(anEvent); break; // π− π0  p
 
+  case 7227: GenerateE72PionPlusFromBeamFile(anEvent); break;  // π+ beam-through from BEAM file
+
   default:
     G4cerr << " * Generator number error : " << next_generator << G4endl;
     break;
@@ -3749,7 +3751,7 @@ PrimaryGeneratorAction::GenerateE72PionMinusFromBeamFile(G4Event* anEvent)
   // 총알 장전: pi- 로, 빔 파일에서 읽은 방향/에너지/버텍스 그대로 사용
   m_particle_gun->SetParticleDefinition(m_PionMinus);
   m_particle_gun->SetParticleMomentumDirection(p.v());   // 방향
-  m_particle_gun->SetParticleEnergy(p.e() - mass);       // 운동에너지
+  m_particle_gun->SetParticleEnergy(p.e() - mass);       // 운동에너지                    
   m_particle_gun->SetParticlePosition(v.v());            // 위치
   m_particle_gun->GeneratePrimaryVertex(anEvent);
 
@@ -3758,6 +3760,33 @@ PrimaryGeneratorAction::GenerateE72PionMinusFromBeamFile(G4Event* anEvent)
 }
 
 //_____________________________________________________________________________
+// case 7218 : E72 beam file에서 읽은 궤적/모멘텀을 그대로 쓰되 입자만 pi+로 발사
+// PrimaryGeneratorAction.cc
+void PrimaryGeneratorAction::GenerateE72PionPlusFromBeamFile(G4Event* anEvent)
+{
+  static const auto PionPlus = particleTable->FindParticle("pi+");
+  const auto pdg  = PionPlus->GetPDGEncoding(); // +211
+  const auto mass = PionPlus->GetPDGMass();
+
+  G4LorentzVector p(m_beam->mom,
+                    std::sqrt(m_beam->mom.mag()*m_beam->mom.mag() + mass*mass));
+  G4LorentzVector v(m_beam->pos, 0.0);
+
+  gAnaMan.SetMomKaonLab(0.0);
+  gAnaMan.SetCosTheta(-9999.0);
+  gAnaMan.SetCosThetaLambda(-9999.0);
+
+  m_particle_gun->SetParticleDefinition(m_PionPlus);
+  m_particle_gun->SetParticleMomentumDirection(p.v());
+  m_particle_gun->SetParticleEnergy(p.e() - mass);
+  m_particle_gun->SetParticlePosition(v.v());
+  m_particle_gun->GeneratePrimaryVertex(anEvent);
+
+  gAnaMan.SetPrimaryParticle(0, pdg, p, v);
+  // (선택) SteppingAction의 SEC 로깅과 호환 원하면:
+  m_primary_pdg[0] = pdg;
+}
+
 //_____________________________________________________________________________
 //
 // 7218 : [REAL π− BEAM MODE]

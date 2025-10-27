@@ -1,18 +1,27 @@
 // -*- C++ -*-
 // SteppingAction.cc  (E45)
-// - 강제 2π 생성 모드(옵션) + 채널 선택(0/1/2)을 conf/환경변수로 런타임 반영
+// 2025-10-26 (user modification):
+//   - π+ 원빔( PDG=+211 )도 '원빔처럼' 판정하도록 확대
+//   - E72 π+ beam-through용 제너레이터(7227) 지원
+//   - 2π 강제 스폰 로직에 π+ 전용 채널 추가
+//       * Force2PiMode=0 : π+ π+ n
+//       * Force2PiMode=1 : π+ π0 p
+//       * Force2PiMode=2 : 위의 1:1 mixture
+//
+// 기존(π−)과의 대응:
+//   * (π−, mode=0): π+ π− n
+//   * (π−, mode=1): π− π0 p
+//   * (π−, mode=2): 1:1 mixture
+//
 // - 원빔/자식 출처 태깅: OriginTag 적용 (kPrimaryBeam / kForced2PiChild)
 // - (하위호환) SimpleTag("UPSTREAM_HELPER")도 fallback으로 인식
-// - 2025-10-24: σ 불요 "트랙-균일" 방식 도입
-//               (진입→LH2 내부에서 길이-가중 리저버 샘플링→이탈 시 1회 Spawn)
-//               + 후보 지점 모멘텀(pcand)·시간(tcand) 저장 → √s/시간 일치
-// ============================================================================
+// - 2025-10-24: 길이-가중 리저버 샘플링 도입 (타겟 내부 1회 스폰)
 
 #include "SteppingAction.hh"
 
 #include <string>
-#include <cmath>    // std::hypot
-#include <cstdlib>  // std::getenv
+#include <cmath>
+#include <cstdlib>
 
 #include <G4Material.hh>
 #include <G4ParticleDefinition.hh>
@@ -28,7 +37,7 @@
 #include <G4EventManager.hh>
 #include <G4StackManager.hh>
 
-#include <Randomize.hh>           // G4UniformRand
+#include <Randomize.hh>
 #include <CLHEP/Units/SystemOfUnits.h>
 
 #include "ConfMan.hh"
@@ -36,7 +45,7 @@
 #include "AnaManager.hh"
 #include "PrimaryGeneratorAction.hh"
 
-#include "TrackTag.hh"   // OriginTag / SimpleTag
+#include "TrackTag.hh"
 #include "DCGeomMan.hh"
 #include "DetSizeMan.hh"
 
@@ -44,7 +53,7 @@
 #include "TGenPhaseSpace.h"
 
 // ==== SCENARIO SWITCH =======================================================
-// 1) 강제 2π 생성 모드 (우리가 쓰던 모드)
+// 1) 강제 2π 생성 모드
 // 2) 빔-through 모드
 //#define E45_SCENARIO_FORCE_2PI
 // ============================================================================
@@ -88,29 +97,30 @@ namespace
   // 공통 판정: 이 track이 "원빔처럼" 취급되어야 하는가?
   //  1) OriginTag(kPrimaryBeam) 우선
   //  2) (하위호환) SimpleTag("UPSTREAM_HELPER")
-  //  3) (백업) parentID==0 && pdg==-211
+  //  3) (백업) parentID==0 && pdg==±211 (π±)
   // ──────────────────────────────────────────────────────────────────────────
   inline bool IsPrimaryBeamLike(const G4Track* trk){
     if(!trk) return false;
     if(HasOrigin(trk, EOrigin::kPrimaryBeam)) return true;
 
-    // fallback: SimpleTag
     if(auto* s = dynamic_cast<const SimpleTag*>(trk->GetUserInformation())){
       if(s->why_ && std::string(s->why_)=="UPSTREAM_HELPER") return true;
     }
 
-    // backup: 물리적 정의
     const auto* pd = trk->GetParticleDefinition();
     const int pdg = pd ? pd->GetPDGEncoding() : 0;
-    return (trk->GetParentID()==0 && pdg==-211);
+    return (trk->GetParentID()==0 && (pdg==+211 || pdg==-211));
   }
 
-  // ------------------------- helper: 3-body spawner (p override) ------------
-  // channel=0 : pi+ pi- n   , channel=1 : pi- pi0 p
-  void Spawn3BodyAtWithP(const G4ThreeVector& p_override,
-                         const G4Track* motherTrack, int channel,
-                         const G4ThreeVector& vtx, G4StackManager* stackMan,
-                         G4double t_override = -1.0)
+  // ------------------- helper: 3-body spawner (p override) ------------------
+  // beamPdg = +211 (π+) or -211 (π−)
+  // For π−: mode=0 → π+ π− n,  mode=1 → π− π0 p
+  // For π+: mode=0 → π+ π+ n,  mode=1 → π+ π0 p
+  void Spawn3BodyAtWithP_ChargedPi(const G4ThreeVector& p_override,
+                                   const G4Track* motherTrack, int beamPdg,
+                                   int mode01,  // 0/1, mixture는 호출부에서 결정
+                                   const G4ThreeVector& vtx, G4StackManager* stackMan,
+                                   G4double t_override = -1.0)
   {
     using namespace CLHEP;
 
@@ -122,47 +132,62 @@ namespace
     const double mP   = pt->FindParticle("proton")->GetPDGMass()/GeV;
 
     const double pGeV = p_override.mag()/GeV;
+    // beam hadron(π±) + stationary proton(p) 로 근사 (기존 로직 유지)
     TLorentzVector LVpi ( p_override.x()/GeV, p_override.y()/GeV, p_override.z()/GeV,
-                          std::hypot(pGeV, mPim) );
+                          std::hypot(pGeV, (beamPdg==-211? mPim : mPip)) );
     TLorentzVector LVpro( 0.,0.,0., mP );
     TLorentzVector W = LVpi + LVpro;
 
+    // 출력 입자 셋 채널 정의
     double masses[3];
-    if(channel==0){ masses[0]=mPip; masses[1]=mPim; masses[2]=mN; }
-    else          { masses[0]=mPim; masses[1]=mPi0; masses[2]=mP; }
+    struct Out { const char* name; } outs[3];
+
+    if (beamPdg==-211) {
+      if (mode01==0) { // π−: π+ π− n
+        masses[0]=mPip; masses[1]=mPim; masses[2]=mN;
+        outs[0]={"pi+"}; outs[1]={"pi-"}; outs[2]={"neutron"};
+      } else {          // π−: π− π0 p
+        masses[0]=mPim; masses[1]=mPi0; masses[2]=mP;
+        outs[0]={"pi-"}; outs[1]={"pi0"}; outs[2]={"proton"};
+      }
+    } else { // beamPdg==+211
+      if (mode01==0) { // π+: π+ π+ n
+        masses[0]=mPip; masses[1]=mPip; masses[2]=mN;
+        outs[0]={"pi+"}; outs[1]={"pi+"}; outs[2]={"neutron"};
+      } else {          // π+: π+ π0 p
+        masses[0]=mPip; masses[1]=mPi0; masses[2]=mP;
+        outs[0]={"pi+"}; outs[1]={"pi0"}; outs[2]={"proton"};
+      }
+    }
 
     if(W.M() <= masses[0] + masses[1] + masses[2]) return;
 
     TGenPhaseSpace gen;
     gen.SetDecay(W, 3, masses);
-    gen.Generate(); // unbiased single sample
-
-    struct Out { const char* name; } outs0[3]={{"pi+"},{"pi-"},{"neutron"}};
-    struct Out  outs1[3]={{"pi-"},{"pi0"},{"proton"}};
-    const auto* outs = (channel==0)? outs0 : outs1;
+    gen.Generate(); // single unbiased sample
 
     const double t0 = (t_override>=0.0) ? t_override : motherTrack->GetGlobalTime();
 
-    auto& ana = AnaManager::GetInstance();
     for(int i=0;i<3;i++){
       const TLorentzVector* d = gen.GetDecay(i);
       auto def = pt->FindParticle(outs[i].name);
 
-      // (A) 자식 트랙을 G4에 올리기
+      // (A) 자식 트랙 push
       auto dyn = new G4DynamicParticle(def,
                     G4ThreeVector(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV));
       auto trk = new G4Track(dyn, t0, vtx);
       trk->SetParentID(motherTrack->GetTrackID());
       trk->SetTrackStatus(fAlive);
-      trk->SetUserInformation(new OriginTag(EOrigin::kForced2PiChild, channel, outs[i].name));
+      trk->SetUserInformation(new OriginTag(EOrigin::kForced2PiChild,
+                                            mode01, outs[i].name));
       stackMan->PushOneTrack(trk);
 
-      // (B) 오프라인용 SEC 브랜치에도 즉시 기록
-      const int  motherPdg   = -211;
+      // (B) SEC 브랜치 기록
+      const int  motherPdg   = beamPdg;
       const int  daughterPdg = def->GetPDGEncoding();
       G4LorentzVector p4(d->Px()*GeV, d->Py()*GeV, d->Pz()*GeV, d->E()*GeV);
       G4LorentzVector v4(vtx, 0.0);
-      ana.SetSecondaryVertex(daughterPdg, motherPdg, p4, v4);
+      gAnaMan.SetSecondaryVertex(daughterPdg, motherPdg, p4, v4);
     }
   }
 
@@ -207,8 +232,6 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
   auto stepLength  = theTrack->GetStepLength();
   G4ThreeVector stepMiddlePosition =
       (prePoint->GetPosition() + postPoint->GetPosition())/2.0;
-
-  const bool isPrimaryBeam = (parentID==0 && particlePdg==-211); // backup 정의 (사용은 IsPrimaryBeamLike 우선)
 
   // --------- (원본 코드) 지표 수집/기존 기능 ---------
   if (prePVName == "TargetPV") {
@@ -255,11 +278,10 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
     }
   }
 
-//=========================== 커스텀 로직 (토글) ===========================
 #ifdef E45_SCENARIO_FORCE_2PI
   // ==================== [모드 1: 강제 2π 생성] ====================
 
-  // (A) VP4 평면 miss → 원빔 kill
+  // (A) VP4 miss → 원빔 kill (원빔처럼 보이는 트랙만)
   {
     if (IsPrimaryBeamLike(theTrack)) {
       static const auto& gGeom = DCGeomMan::GetInstance();
@@ -326,7 +348,6 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
           st.active  = true;
           st.hasCand = false;
           st.S       = 0.0;
-          // 즉시 생성/kill 하지 않음: 이탈 시점에 한 번만 생성
         }
       }
     }
@@ -346,21 +367,17 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
         const double ell = theTrack->GetStepLength();
         if (ell > 0.0) {
           st.S += ell;
-          // 확률 ell/S 로 이번 스텝을 후보로 채택 (리저버 샘플링)
           if (G4UniformRand() < (ell / st.S)) {
             const double u = G4UniformRand();
 
-            // 위치 보간
             const auto xpre  = prePoint ->GetPosition();
             const auto xpost = postPoint->GetPosition();
             st.vtx = xpre + u*(xpost - xpre);
 
-            // ★ 모멘텀 보간 (후보 지점 p 저장)
             const auto ppre  = prePoint ->GetMomentum();
             const auto ppost = postPoint->GetMomentum();
             st.pcand = ppre + u*(ppost - ppre);
 
-            // (선택) 시간 보간
             const auto tpre  = prePoint ->GetGlobalTime();
             const auto tpost = postPoint->GetGlobalTime();
             st.tcand = tpre + u*(tpost - tpre);
@@ -390,20 +407,22 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
           auto &st = it->second;
 
           if (st.hasCand) {
-            // 채널 선택
-            const int mode = GetForce2PiMode();
-            int channel = (mode==0)?0 : (mode==1)?1 : (G4UniformRand()<0.5?0:1);
+            // 채널 선택 (0/1 or 50:50)
+            int mode = GetForce2PiMode();
+            if (mode!=0 && mode!=1) mode = (G4UniformRand()<0.5 ? 0 : 1);
 
             auto* stackMan = G4EventManager::GetEventManager()->GetStackManager();
             if (stackMan) {
-              Spawn3BodyAtWithP(st.pcand, theTrack, channel, st.vtx, stackMan, st.tcand);
+              const int beamPdg = theTrack->GetParticleDefinition()->GetPDGEncoding(); // ±211
+              Spawn3BodyAtWithP_ChargedPi(st.pcand, theTrack, beamPdg, mode,
+                                          st.vtx, stackMan, st.tcand);
             }
 
-            gAnaMan.MarkForced2Pi(channel);
+            gAnaMan.MarkForced2Pi(mode);
             theTrack->SetTrackStatus(fStopAndKill); // 원빔 제거
           }
-          m_uat.erase(it); // 상태 정리
-          return; // 생성/kill 후 조기 종료
+          m_uat.erase(it);
+          return;
         }
       }
     }
@@ -446,8 +465,8 @@ SteppingAction::UserSteppingAction(const G4Step* theStep)
 #else
   // ==================== [모드 2: 빔-through] ====================
   //  - 강제 3체 생성 없음
-  //  - VP4 miss-kill / VP4 하드가드 / VP5 fail-safe 없음
-  //  - 따라서 원빔(π−, ParentID=0)은 물리 그대로 진행
+  //  - VP4/VP5 가드 없음
+  //  - 원빔(π±, ParentID=0)은 물리 그대로 진행
 #endif
 //========================= 커스텀 로직 끝 ==========================
 

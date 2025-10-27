@@ -153,6 +153,9 @@ public:
   void     GenerateE72PionMinusFromBeamFile(G4Event* anEvent); // #7217 for E45
   void     GenerateE45_2PiN_PipPim_n_PhaseSpace(G4Event* anEvent); // 7218: π⁻p→π⁺π⁻n
   void     GenerateE45_2PiN_PimPi0_p_PhaseSpace(G4Event* anEvent); // 7219: π⁻p→π⁻π⁰p
+  // jaejin: 25.10.27
+  void GenerateE72PionPlusFromBeamFile(G4Event* anEvent); // #7227 for E45, π+
+
 
 
   // KKpp
