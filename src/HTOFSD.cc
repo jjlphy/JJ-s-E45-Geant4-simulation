@@ -1,4 +1,12 @@
 // -*- C++ -*-
+// HTOFSD.cc
+// 2025-10-26 (user modification by jaejin & assistant)
+// - TParticle::StatusCode  : HTOF tile ID (copy-no) 유지
+// - TParticle::UniqueID    : OriginTag(EOrigin) 값을 정수로 저장
+// - TParticle::PdgCode     : 방어용으로 PDG 코드도 함께 저장
+// - OriginTag 멤버명은 origin 사용 (TrackTag.hh 기준)
+// - SimpleTag("UPSTREAM_HELPER")를 kPrimaryBeam으로 폴백 태깅
+
 #include "HTOFSD.hh"
 
 #include <G4Step.hh>
@@ -7,15 +15,16 @@
 #include <G4VPhysicalVolume.hh>
 #include <G4TouchableHistory.hh>
 #include <G4ParticleDefinition.hh>
+#include <G4StepStatus.hh>
 
 #include "HTOFHit.hh"
 #include "FuncName.hh"
 #include "TParticle.h"
 
-// ★ 추가: OriginTag 읽기 위해
-#include "TrackTag.hh"  // EOrigin, OriginTag
+// ★ OriginTag / SimpleTag
+#include "TrackTag.hh"  // EOrigin, OriginTag, SimpleTag
 
-// prefix 체크 헬퍼는 그대로…
+// 작은 헬퍼: 문자열 prefix 체크
 static inline bool StartsWith(const G4String& s, const char* prefix){
   return s.find(prefix) == 0;
 }
@@ -42,8 +51,10 @@ G4bool HTOFSD::ProcessHits(G4Step* aStep, G4TouchableHistory* /* ROhist */)
   const auto trk = aStep->GetTrack();
   const auto def = trk->GetDefinition();
 
+  // 중성 제외 (전하 0)
   if (!def || def->GetPDGCharge() == 0.) return false;
 
+  // 엔트리 조건: 첫스텝/경계/Undefined
   const auto stat = pre->GetStepStatus();
   const bool accept =
       aStep->IsFirstStepInVolume() ||
@@ -51,7 +62,7 @@ G4bool HTOFSD::ProcessHits(G4Step* aStep, G4TouchableHistory* /* ROhist */)
       (stat == fUndefined);
   if (!accept) return false;
 
-  // --- copy-no 추출 ---
+  // --- copy-no 추출 (pre 우선, post 폴백) ---
   int copyNo = -1;
   G4String pvName = "";
   if (const auto touch = pre->GetTouchable()){
@@ -79,27 +90,37 @@ G4bool HTOFSD::ProcessHits(G4Step* aStep, G4TouchableHistory* /* ROhist */)
   // --- 히트 생성 ---
   auto hit = new HTOFHit(SensitiveDetectorName, aStep);
 
-  // ★★★ 핵심: copy-no는 StatusCode에, Origin은 UniqueID에 저장 ★★★
+  // --- TParticle에 메타데이터 주입 ---
   if (auto tp = hit->GetParticle()){
-    // 1) 타일 ID로 쓰기 위해 copy-no 유지
+    // (1) 타일 ID = copy-no
     tp->SetStatusCode(copyNo);
 
-    // 2) 출처(origin) 태그를 UniqueID로 함께 보냄
+    // (2) OriginTag → UniqueID (정수화)
     int origin_code = -1; // unknown
     if (auto ui = trk->GetUserInformation()){
       if (auto ot = dynamic_cast<const OriginTag*>(ui)){
-        // EOrigin enum을 정수로
+        // TrackTag.hh 에서 멤버명이 origin 임
         origin_code = static_cast<int>(ot->origin);
-        // 예: kPrimaryBeam=0, kForced2PiChild=1 … (TrackTag.hh 정의에 따름)
+      } else if (auto st = dynamic_cast<const SimpleTag*>(ui)){
+        // 하위호환: SimpleTag("UPSTREAM_HELPER") → kPrimaryBeam 간주
+        if (st->why_ && std::string(st->why_)=="UPSTREAM_HELPER"){
+          origin_code = static_cast<int>(EOrigin::kPrimaryBeam);
+        }
       }
     }
     tp->SetUniqueID(origin_code);
+
+    // (3) PDG 코드도 기록(오프라인 방어/진단에 유용)
+    tp->SetPdgCode(def->GetPDGEncoding());
   }
 
   m_hits_collection->insert(hit);
   return true;
 }
 
-void HTOFSD::EndOfEvent(G4HCofThisEvent*) {}
+void HTOFSD::EndOfEvent(G4HCofThisEvent* /* HCTE */) {}
 void HTOFSD::DrawAll() {}
-void HTOFSD::PrintAll(){ if (m_hits_collection) m_hits_collection->PrintAllHits(); }
+void HTOFSD::PrintAll()
+{
+  if (m_hits_collection) m_hits_collection->PrintAllHits();
+}
