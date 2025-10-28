@@ -25,6 +25,9 @@
 // Denominator for % : #events with BH2 in [lo,hi]  (Beam)
 //
 // Cuts: default 0.1 MIP with dE/dx=2 MeV/cm, BH2=5 mm, HTOF=10 mm.
+//Trigger_study_plusbeam_10_28_v2("../rootfile/E45_Nov_beamplus_098.root","g4hyptpc",  /*bh2_lo=*/4, /*bh2_hi=*/10,  /*mipFrac=*/0.10, /*mipMeVperCm=*/2.0,/*BH2_thk=*/5.0,  /*HTOF_thk=*/10.0,  /*excludeTilesCSV=*/""); 
+                             
+              
 
 #include "TFile.h"
 #include "TTree.h"

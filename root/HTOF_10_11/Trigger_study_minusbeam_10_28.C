@@ -1,31 +1,34 @@
 // -*- C++ -*-
-// Trigger_study_plusbeam_10_28_v2.C (2025-10-28 for jaejin)
-// Changes vs v1:
-//  - Print ABS counts + % (Beam base) for Trig1/Trig2 variants.
-//  - Consistency check: Trig1 == Trig2 + VetoFired (per variant).
-//  - Debug stats: how often each veto set actually fired.
-//  - excludeTilesCSV: analysis-side mask of HTOF tiles (ignored in mult & veto).
+// Trigger_study_minusbeam_10_28.C (2025-10-28 for jaejin)
+// Minus-beam version using veto windows centered on tiles 20–24.
 //
 // Sections:
-//   (Sec1) BH2 Seg 4–10
-//   (Sec2) BH2 Seg 4–9
-//   (Sec3) BH2 Seg 5–10
+//   Sec1: BH2 4–10   | Sec2: BH2 4–9   | Sec3: BH2 5–10
 //
 // Trigger logic per section:
-//   Beam      = (BH2 in [lo,hi])
-//   Trig1     = Beam && (HTOF multiplicity >= 2)     // after excluding tiles
-//   Trig2(*)  = Trig1 && !BeamVeto(*)
+//   Beam   = (BH2 in [lo,hi])
+//   Trig1  = Beam && (HTOF multiplicity >= 2)              // after excluding tiles
+//   Trig2* = Trig1 && !BeamVeto(*)
 //
-// BeamVeto variants for plus-beam (HTOF tile copy-no.):
-//   tight      : (17,18)&&(18,19)   → {17,18,19} must all be present to veto
-//   fit        : tight + (19,20)    → {17,18,19,20}
-//   wide       : fit   + (16,17)    → {16,17,18,19,20}
-//   ultra-wide : wide  + (20,21)    → {16,17,18,19,20,21}
+// BeamVeto variants (copy-no):
+//   tight      : (20,21) && (21,22)         → {20,21,22} all present
+//   fit        : tight   && (22,23)         → {20,21,22,23}
+//   wide       : fit     && (19,20)         → {19,20,21,22,23}
+//   ultra-wide : wide    && (23,24)         → {19,20,21,22,23,24}
 //
-// Denominator for % : #events with BH2 in [lo,hi]  (Beam)
+// Denominator for % : #events with BH2 in [lo,hi] (Beam)
 //
-// Cuts: default 0.1 MIP with dE/dx=2 MeV/cm, BH2=5 mm, HTOF=10 mm.
-
+// Extras:
+//  - Prints ABS counts + % (Beam-based), Beam Veto efficiency, Beam-induced background (@Beam=1e6)
+//  - Consistency check: Trig1 == Trig2_survivors + Veto_fired (per variant)
+//  - excludeTilesCSV: comma list (e.g., "20,21") to exclude tiles from multiplicity & veto
+//
+// Usage:
+//   root -l
+//   .L Trigger_study_minusbeam_10_28.C+
+//   Trigger_study_minusbeam_10_28("../rootfile/E45_Nov_beamminus_098.root","g4hyptpc", 4,10, 0.10,2.0, 5.0,10.0, "");
+//                                 "g4hyptpc", 4,10, 0.10,2.0, 5.0,10.0, "");
+//
 #include "TFile.h"
 #include "TTree.h"
 #include "TParticle.h"
@@ -42,7 +45,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace TSP2 {
+namespace TSM {
 
 static const int    kNBH2Seg   = 15;     // 0..14
 static const double kBH2_x0    = -10.0;  // [mm]
@@ -51,17 +54,14 @@ static const double kBH2_total = kNBH2Seg * kBH2_pitch;
 static const int    kNHTOF     = 34;     // 0..33
 
 struct DictGuard {
-  DictGuard(){
-    gSystem->Load("libPhysics");
-    gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector");
-  }
+  DictGuard(){ gSystem->Load("libPhysics");
+               gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector"); }
 };
 static DictGuard _dg;
 
 static inline double MIPThrMeV(double frac,double dEdx,double thk_mm){
   return frac * dEdx * (thk_mm*0.1); // mm→cm
 }
-
 static inline int MapBH2_WorldToSeg(double x, double, double){
   const double xloc = x - kBH2_x0;
   const double xmin = -0.5*kBH2_total, xmax = 0.5*kBH2_total;
@@ -70,34 +70,31 @@ static inline int MapBH2_WorldToSeg(double x, double, double){
   if(idx<0) idx=0; if(idx>=kNBH2Seg) idx=kNBH2Seg-1;
   return idx;
 }
-
-static inline double pct(long long a, long long b){
-  return (b>0)? (100.0*double(a)/double(b)):0.0;
-}
+static inline double pct(long long a, long long b){ return (b>0)? (100.0*double(a)/double(b)) : 0.0; }
 
 // parse "a,b,c" → {a,b,c}
 static std::set<int> ParseCSVInt(const char* csv){
-  std::set<int> s;
-  if(!csv) return s;
-  std::stringstream ss(csv);
-  std::string tok;
-  while(std::getline(ss, tok, ',')){
-    if(tok.empty()) continue;
-    s.insert(std::stoi(tok));
-  }
+  std::set<int> s; if(!csv) return s;
+  std::stringstream ss(csv); std::string tok;
+  while(std::getline(ss, tok, ',')){ if(tok.empty()) continue; s.insert(std::stoi(tok)); }
   return s;
 }
 
-// Veto variants (plus-beam)
+// ---- minus-beam veto centered on 20–24 ----
 struct VetoSet { bool tight=false, fit=false, wide=false, ultra=false; };
 static inline VetoSet EvalVeto(const std::set<int>& tiles){
   auto has=[&](int t){ return tiles.count(t)>0; };
-  const bool h16=has(16), h17=has(17), h18=has(18), h19=has(19), h20=has(20), h21=has(21);
+  const bool h19=has(19), h20=has(20), h21=has(21), h22=has(22), h23=has(23), h24=has(24);
+
   VetoSet v;
-  v.tight = (h17 && h18 && h19);
-  v.fit   = (h17 && h18 && h19 && h20);
-  v.wide  = (h16 && h17 && h18 && h19 && h20);
-  v.ultra = (h16 && h17 && h18 && h19 && h20 && h21);
+  // tight: (20,21)&&(21,22) → {20,21,22}
+  v.tight = (h20 && h21 && h22);
+  // fit  : tight&&(22,23)   → {20,21,22,23}
+  v.fit   = v.tight && h23;
+  // wide : fit&&(19,20)     → {19,20,21,22,23}
+  v.wide  = v.fit && h19;
+  // ultra: wide&&(23,24)    → {19,20,21,22,23,24}
+  v.ultra = v.wide && h24;
   return v;
 }
 
@@ -107,10 +104,10 @@ struct Counts {
   long long N_trig1=0;     // Beam && MP>=2 (after exclusion)
   // survivors (!veto)
   long long N_trig2_tight=0, N_trig2_fit=0, N_trig2_wide=0, N_trig2_ultra=0;
-  // veto fired counts (for consistency/debug)
+  // veto fired counts
   long long N_veto_tight=0, N_veto_fit=0, N_veto_wide=0, N_veto_ultra=0;
-  // helpful tile presences (optional)
-  long long have16=0, have17=0, have18=0, have19=0, have20=0, have21=0;
+  // tile presence (optional)
+  long long have19=0, have20=0, have21=0, have22=0, have23=0, have24=0;
 };
 
 static Counts ProcessRange(TTree* T,
@@ -129,34 +126,32 @@ static Counts ProcessRange(TTree* T,
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie); C.N_total++;
 
-    // ---- BH2 valid segments (Σedep≥thr)
+    // ---- BH2 valid (Σedep≥thr) ----
     std::map<int,double> bh2E;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
-        const TParticle& p = BH2->at(i);
+        const TParticle& p=BH2->at(i);
         int sid = MapBH2_WorldToSeg(p.Vx(),p.Vy(),p.Vz());
         if(0<=sid && sid<kNBH2Seg){
-          const double ed = (hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i) : p.GetWeight();
+          const double ed=(hasBH2edep && BH2_edep && i<BH2_edep->size())? BH2_edep->at(i) : p.GetWeight();
           bh2E[sid]+=ed;
         }
       }
     }
     std::set<int> bh2Valid;
     for(const auto& kv:bh2E) if(kv.second>=thrBH2) bh2Valid.insert(kv.first);
-
-    bool beam=false;
-    for(int s:bh2Valid){ if(bh2_lo<=s && s<=bh2_hi){ beam=true; break; } }
+    bool beam=false; for(int s:bh2Valid){ if(bh2_lo<=s && s<=bh2_hi){ beam=true; break; } }
     if(beam) C.N_beam++;
 
-    // ---- HTOF valid tiles (Σedep≥thr) with exclusion
+    // ---- HTOF valid (Σedep≥thr) with exclusion ----
     std::map<int,double> htofE;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
-        const TParticle& p = HTOF->at(i);
+        const TParticle& p=HTOF->at(i);
         int tid = p.GetStatusCode();
         if(0<=tid && tid<kNHTOF){
-          if(exclude.count(tid)) continue; // 분석단 배제
-          const double ed = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i) : p.GetWeight();
+          if(exclude.count(tid)) continue;
+          const double ed=(hasHTOFedep && HTOF_edep && i<HTOF_edep->size())? HTOF_edep->at(i) : p.GetWeight();
           htofE[tid]+=ed;
         }
       }
@@ -165,20 +160,18 @@ static Counts ProcessRange(TTree* T,
     for(const auto& kv:htofE) if(kv.second>=thrHTOF) tiles.insert(kv.first);
     const int mult = (int)tiles.size();
 
-    // tile presence stats (optional)
-    if(tiles.count(16)) C.have16++;
-    if(tiles.count(17)) C.have17++;
-    if(tiles.count(18)) C.have18++;
+    // presence (diagnostic)
     if(tiles.count(19)) C.have19++;
     if(tiles.count(20)) C.have20++;
     if(tiles.count(21)) C.have21++;
+    if(tiles.count(22)) C.have22++;
+    if(tiles.count(23)) C.have23++;
+    if(tiles.count(24)) C.have24++;
 
     // ---- Trig1 & Trig2(*)
     if(beam && mult>=2){
       C.N_trig1++;
       const auto v = EvalVeto(tiles);
-
-      // survivors (!veto) & veto-fired bookkeeping
       if(!v.tight) C.N_trig2_tight++; else C.N_veto_tight++;
       if(!v.fit)   C.N_trig2_fit++;   else C.N_veto_fit++;
       if(!v.wide)  C.N_trig2_wide++;  else C.N_veto_wide++;
@@ -194,14 +187,13 @@ static void PrintSection(const char* title, const Counts& C, int lo, int hi){
     if(C.N_beam<=0) return 0;
     return (long long) llround( BeamNorm * (double)trig2 / (double)C.N_beam );
   };
-  auto p = [&](long long x)->double{ return pct(x, C.N_beam); };
+  auto p   = [&](long long x)->double{ return pct(x, C.N_beam); };
   auto eff = [&](long long trig2)->double{ return 100.0 - p(trig2); };
 
   std::cout<<"\n== "<<title<<" | BH2 "<<lo<<"–"<<hi<<" ==\n";
   std::cout<<"Total events                 : "<<C.N_total<<"\n";
   std::cout<<"Beam  (BH2 in-range)         : "<<C.N_beam<<"\n";
 
-  // Beam-based absolute & %
   std::cout<<std::fixed<<std::setprecision(3);
   std::cout<<"[Beam-based counts & %]\n";
   std::cout<<"  Trig1 (Beam && MP>=2)      : "<<C.N_trig1<<"  ("<<p(C.N_trig1)<<" %)\n";
@@ -210,21 +202,18 @@ static void PrintSection(const char* title, const Counts& C, int lo, int hi){
   std::cout<<"  Trig2 wide   (!veto)       : "<<C.N_trig2_wide <<"  ("<<p(C.N_trig2_wide) <<" %)\n";
   std::cout<<"  Trig2 ultra  (!veto)       : "<<C.N_trig2_ultra<<"  ("<<p(C.N_trig2_ultra)<<" %)\n";
 
-  // Efficiency
   std::cout<<"[Beam Veto efficiency (%), = 100 - Trig2/Beam*100]\n";
   std::cout<<"  tight                      : "<<eff(C.N_trig2_tight)<<"\n";
   std::cout<<"  fit                        : "<<eff(C.N_trig2_fit)  <<"\n";
   std::cout<<"  wide                       : "<<eff(C.N_trig2_wide) <<"\n";
   std::cout<<"  ultra                      : "<<eff(C.N_trig2_ultra)<<"\n";
 
-  // Background
   std::cout<<"[Beam-induced background (counts) @ Beam=1,000,000]\n";
   std::cout<<"  tight                      : "<<bg(C.N_trig2_tight)<<"\n";
   std::cout<<"  fit                        : "<<bg(C.N_trig2_fit)  <<"\n";
   std::cout<<"  wide                       : "<<bg(C.N_trig2_wide) <<"\n";
   std::cout<<"  ultra                      : "<<bg(C.N_trig2_ultra)<<"\n";
 
-  // Consistency checks
   auto chk = [&](const char* name, long long surv, long long veto){
     const long long sum = surv + veto;
     std::cout<<"[CHECK] "<<name<<": Trig1 == survivors + veto ?  "
@@ -241,25 +230,24 @@ static void PrintSection(const char* title, const Counts& C, int lo, int hi){
   chk("wide",  C.N_trig2_wide,  C.N_veto_wide);
   chk("ultra", C.N_trig2_ultra, C.N_veto_ultra);
 
-  // Optional tile presence (to diagnose “배제했는데 %가 안 바뀌어요”)
-  std::cout<<"[Tile presence among Trig1 (approx; counted over all Beam events)]\n";
-  std::cout<<"  have16="<<C.have16<<", have17="<<C.have17<<", have18="<<C.have18
-           <<", have19="<<C.have19<<", have20="<<C.have20<<", have21="<<C.have21<<"\n";
+  std::cout<<"[Tile presence among Beam events (approx, for diagnosis)]\n";
+  std::cout<<"  have19="<<C.have19<<", have20="<<C.have20<<", have21="<<C.have21
+           <<", have22="<<C.have22<<", have23="<<C.have23<<", have24="<<C.have24<<"\n";
 }
 
-} // namespace TSP2
+} // namespace TSM
 
 
-void Trigger_study_plusbeam_10_28_v2(const char* filename,
-                                     const char* treename="g4hyptpc",
-                                     int bh2_lo=4, int bh2_hi=10,
-                                     double mipFrac=0.10,
-                                     double mipMeVperCm=2.0,
-                                     double BH2_thickness_mm=5.0,
-                                     double HTOF_thickness_mm=10.0,
-                                     const char* excludeTilesCSV="" ) // e.g. "20,21"
+void Trigger_study_minusbeam_10_28(const char* filename,
+                                   const char* treename="g4hyptpc",
+                                   int bh2_lo=4, int bh2_hi=10,
+                                   double mipFrac=0.10,
+                                   double mipMeVperCm=2.0,
+                                   double BH2_thickness_mm=5.0,
+                                   double HTOF_thickness_mm=10.0,
+                                   const char* excludeTilesCSV="" )
 {
-  using namespace TSP2;
+  using namespace TSM;
 
   // open
   TFile* f=TFile::Open(filename,"READ");
@@ -272,7 +260,7 @@ void Trigger_study_plusbeam_10_28_v2(const char* filename,
   const bool hasBH2edep  = (T->GetBranch("BH2_edep")  != nullptr);
   const bool hasHTOFedep = (T->GetBranch("HTOF_edep") != nullptr);
 
-  // thresholds
+  // thresholds & exclude
   const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);
   const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);
   auto exclude = ParseCSVInt(excludeTilesCSV);
@@ -286,15 +274,15 @@ void Trigger_study_plusbeam_10_28_v2(const char* filename,
   }
 
   // sections
-  const int s1_lo = bh2_lo, s1_hi = bh2_hi;
-  const int s2_lo = 4,      s2_hi = 9;
-  const int s3_lo = 5,      s3_hi = 10;
+  const int s1_lo = bh2_lo, s1_hi = bh2_hi; // Full Beam
+  const int s2_lo = 4,      s2_hi = 9;      // Narrow 1
+  const int s3_lo = 5,      s3_hi = 10;     // Narrow 2
 
-  auto C1 = ProcessRange(T, s1_lo, s1_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep, exclude);
-  auto C2 = ProcessRange(T, s2_lo, s2_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep, exclude);
-  auto C3 = ProcessRange(T, s3_lo, s3_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep, exclude);
+  auto C1 = TSM::ProcessRange(T, s1_lo, s1_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep, exclude);
+  auto C2 = TSM::ProcessRange(T, s2_lo, s2_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep, exclude);
+  auto C3 = TSM::ProcessRange(T, s3_lo, s3_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep, exclude);
 
-  PrintSection("Section 1 (Full Beam)",   C1, s1_lo, s1_hi);
-  PrintSection("Section 2 (Narrow 1)",    C2, s2_lo, s2_hi);
-  PrintSection("Section 3 (Narrow 2)",    C3, s3_lo, s3_hi);
+  TSM::PrintSection("Section 1 (Full Beam)", C1, s1_lo, s1_hi);
+  TSM::PrintSection("Section 2 (Narrow 1)",  C2, s2_lo, s2_hi);
+  TSM::PrintSection("Section 3 (Narrow 2)",  C3, s3_lo, s3_hi);
 }
