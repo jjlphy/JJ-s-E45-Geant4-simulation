@@ -1,5 +1,5 @@
 // -*- C++ -*-
-// HTOF_trigger_study_v2.C  (2025-10-28 for jaejin; +sections +veto variants +extra KPIs)
+// Trigger_study_minusbeam_10_28.C  (2025-10-28 for jaejin; +sections +veto variants +extra KPIs)
 // Sections:
 //   (Sec1) BH2 Seg 4–10
 //   (Sec2) Narrow Beam(1): BH2 Seg 4–9
@@ -15,11 +15,8 @@
 //   wide       : fit   + (19,20)             → {19,20,21,22,23}
 //   ultra-wide : wide  + (23,24)             → {19,20,21,22,23,24}
 //root -l
-//.L HTOF_trigger_study_v2.C+
+//.L Trigger_study_minusbeam_10_28.C+
 // HTOF_trigger_study_v2("../rootfile/E45_fix_Beam_098.root","g4hyptpc",/*bh2_lo=*/4, /*bh2_hi=*/10, /*mipFrac=*/0.10, /*mipMeVperCm=*/2.0, /*BH2_thk=*/5.0, /*HTOF_thk=*/10.0);
-                      /*bh2_lo=*/4, /*bh2_hi=*/10,
-                      /*mipFrac=*/0.10, /*mipMeVperCm=*/2.0,
-                     
 
 //
 // Denominator for % : #events with BH2 in [lo,hi]  (Beam)
