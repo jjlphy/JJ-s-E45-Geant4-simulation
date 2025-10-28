@@ -22,7 +22,7 @@ DEFAULT:
   buff:  /ghi/fs02/orig_root_fs02/had/sks/Users/jaejin/buffer
   bin:   bin/G4HypTPC
   conf:  param/conf/e72_beam.conf
-  root:  /gpfs/group/had/sks/Users/jaejin/E72geant4/k18geant4/hyptpc_E45/root/rootfile/E45_Nov_beamplus_115.root
+  root:  /gpfs/group/had/sks/Users/jaejin/E72geant4/k18geant4/hyptpc_E45/root/rootfile/E45_Nov_piplus_pi0p_098.root
 
 #______________________________________________________________________________
 RUN:
