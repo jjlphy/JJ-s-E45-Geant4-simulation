@@ -136,6 +136,7 @@
         "Trigger_study_minusreaction_10_28.C": "cpp",
         "Trigger_study_plusreaction_10_28.C": "cpp",
         "StatError_10_28.C": "cpp",
-        "Trigger_study_minusbeam_10_28_HTOFselect.C": "cpp"
+        "Trigger_study_minusbeam_10_28_HTOFselect.C": "cpp",
+        "Trigger_study_minusreaction_10_28_HTOFselect.C": "cpp"
     }
 }
