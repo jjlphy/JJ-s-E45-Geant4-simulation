@@ -1,33 +1,38 @@
 // -*- C++ -*-
-// Trigger_study_minusbeam_10_28.C (2025-10-28 for jaejin)
-// Minus-beam version using veto windows centered on tiles 20–24.
+// Trigger_study_minusbeam_10_28.C  (2025-10-28 for jaejin)
+// Minus-beam version with OR-based BeamVeto over adjacent HTOF pairs.
 //
-// Sections:
-//   Sec1: BH2 4–10   | Sec2: BH2 4–9   | Sec3: BH2 5–10
+// Sections (3개를 한 번에 요약 출력):
+//   Sec1: BH2 4–10 (Full Beam)
+//   Sec2: BH2 4–9  (Narrow 1)
+//   Sec3: BH2 5–10 (Narrow 2)
 //
-// Trigger logic per section:
+// Trigger logic (각 섹션 공통):
 //   Beam   = (BH2 in [lo,hi])
-//   Trig1  = Beam && (HTOF multiplicity >= 2)              // after excluding tiles
+//   Trig1  = Beam && (HTOF multiplicity >= 2)      // (유효 타일 수 ≥ 2)
 //   Trig2* = Trig1 && !BeamVeto(*)
 //
-// BeamVeto variants (copy-no):
-//   tight      : (20,21) && (21,22)         → {20,21,22} all present
-//   fit        : tight   && (22,23)         → {20,21,22,23}
-//   wide       : fit     && (19,20)         → {19,20,21,22,23}
-//   ultra-wide : wide    && (23,24)         → {19,20,21,22,23,24}
+// BeamVeto (인접 페어 = 두 타일 동시 히트; 콤마는 AND):
+//   pair(a,b) := (tile a) && (tile b)
+//   tight      : pair(20,21) OR pair(21,22)
+//   fit        : tight       OR pair(22,23)
+//   wide       : fit         OR pair(19,20)
+//   ultra-wide : wide        OR pair(23,24)
 //
-// Denominator for % : #events with BH2 in [lo,hi] (Beam)
+// Denominator for % : Beam(= BH2 in-range) 이벤트 개수
+// 출력 항목(각 섹션):
+//  - 절대 개수 + Beam 기준 %
+//  - Beam Veto efficiency = 100% - (Trig2/Beam)*100   (유효숫자: 소수점 3자리)
+//  - Beam-induced background (counts) @ Beam=1,000,000
 //
-// Extras:
-//  - Prints ABS counts + % (Beam-based), Beam Veto efficiency, Beam-induced background (@Beam=1e6)
-//  - Consistency check: Trig1 == Trig2_survivors + Veto_fired (per variant)
-//  - excludeTilesCSV: comma list (e.g., "20,21") to exclude tiles from multiplicity & veto
+// 옵션: excludeTilesCSV = "콤마구분 타일들" → multiplicity, veto 모두에서 제외(디버그용)
+// 예: excludeTilesCSV="20,21" 이면 20,21 타일을 완전히 무시(멀티/비토 모두)
 //
-// Usage:
+// 사용법:
 //   root -l
 //   .L Trigger_study_minusbeam_10_28.C+
-//   Trigger_study_minusbeam_10_28("../rootfile/E45_Nov_beamminus_098.root","g4hyptpc", 4,10, 0.10,2.0, 5.0,10.0, "");
-//                                 "g4hyptpc", 4,10, 0.10,2.0, 5.0,10.0, "");
+//   Trigger_study_minusbeam_10_28("../rootfile/E45_Nov_beamminus_098.root","g4hyptpc",
+//                                 4,10, 0.10,2.0, 5.0,10.0, "");
 //
 #include "TFile.h"
 #include "TTree.h"
@@ -80,21 +85,24 @@ static std::set<int> ParseCSVInt(const char* csv){
   return s;
 }
 
-// ---- minus-beam veto centered on 20–24 ----
+// ===== OR-logic BeamVeto over adjacent pairs (minus-beam, centered around 20–24) =====
+static inline bool PairHit(const std::set<int>& tiles, int a, int b){
+  return tiles.count(a) && tiles.count(b);
+}
 struct VetoSet { bool tight=false, fit=false, wide=false, ultra=false; };
-static inline VetoSet EvalVeto(const std::set<int>& tiles){
-  auto has=[&](int t){ return tiles.count(t)>0; };
-  const bool h19=has(19), h20=has(20), h21=has(21), h22=has(22), h23=has(23), h24=has(24);
-
+static inline VetoSet EvalVeto_ORpairs(const std::set<int>& tiles){
   VetoSet v;
-  // tight: (20,21)&&(21,22) → {20,21,22}
-  v.tight = (h20 && h21 && h22);
-  // fit  : tight&&(22,23)   → {20,21,22,23}
-  v.fit   = v.tight && h23;
-  // wide : fit&&(19,20)     → {19,20,21,22,23}
-  v.wide  = v.fit && h19;
-  // ultra: wide&&(23,24)    → {19,20,21,22,23,24}
-  v.ultra = v.wide && h24;
+  const bool p19_20 = PairHit(tiles,19,20);
+  const bool p20_21 = PairHit(tiles,20,21);
+  const bool p21_22 = PairHit(tiles,21,22);
+  const bool p22_23 = PairHit(tiles,22,23);
+  const bool p23_24 = PairHit(tiles,23,24);
+
+  // OR 누적
+  v.tight = (p20_21 || p21_22);
+  v.fit   = (v.tight || p22_23);
+  v.wide  = (v.fit   || p19_20);
+  v.ultra = (v.wide  || p23_24);
   return v;
 }
 
@@ -150,7 +158,7 @@ static Counts ProcessRange(TTree* T,
         const TParticle& p=HTOF->at(i);
         int tid = p.GetStatusCode();
         if(0<=tid && tid<kNHTOF){
-          if(exclude.count(tid)) continue;
+          if(exclude.count(tid)) continue;  // multiplicity & veto에서 제외
           const double ed=(hasHTOFedep && HTOF_edep && i<HTOF_edep->size())? HTOF_edep->at(i) : p.GetWeight();
           htofE[tid]+=ed;
         }
@@ -171,7 +179,7 @@ static Counts ProcessRange(TTree* T,
     // ---- Trig1 & Trig2(*)
     if(beam && mult>=2){
       C.N_trig1++;
-      const auto v = EvalVeto(tiles);
+      const auto v = EvalVeto_ORpairs(tiles);
       if(!v.tight) C.N_trig2_tight++; else C.N_veto_tight++;
       if(!v.fit)   C.N_trig2_fit++;   else C.N_veto_fit++;
       if(!v.wide)  C.N_trig2_wide++;  else C.N_veto_wide++;
