@@ -24,7 +24,7 @@
 // Example:
 //   root -l
 //   .L Trigger_study_plusbeam_10_28_v2.C+
-//   Trigger_study_plusbeam_10_28_v2("../rootfile/E45_Nov_beamplus_098.root","g4hyptpc",
+//   Trigger_study_plusbeam_10_28_v2("../rootfile/E45_Nov_beamplus_098.root","g4hyptpc",4,10, 0.10,2.0, 5.0,10.0, "");
 //                                   4,10, 0.10,2.0, 5.0,10.0, "");
 //
 #include "TFile.h"
