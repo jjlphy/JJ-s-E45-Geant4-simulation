@@ -131,6 +131,7 @@
         "HTOF_pair_10_26.C": "cpp",
         "HTOF_pair_2pi_10_26.C": "cpp",
         "HTOF_2D_Hitpattern_10_28.C": "cpp",
-        "Trigger_study_minusbeam_10_28.C": "cpp"
+        "Trigger_study_minusbeam_10_28.C": "cpp",
+        "Trigger_study_plusbeam_10_28.C": "cpp"
     }
 }
