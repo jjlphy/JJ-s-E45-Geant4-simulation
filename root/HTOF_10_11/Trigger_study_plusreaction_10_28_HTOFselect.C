@@ -29,10 +29,10 @@
 // 사용 예:
 //   root -l
 //   .L Trigger_study_plusreaction_10_28_mpOnly.C+
-//   Trigger_study_plusreaction_10_28_mpOnly("../rootfile/E45_Nov_pipluspipn_105.root","g4hyptpc",
+//   Trigger_study_plusreaction_10_28_mpOnly("../rootfile/E45_Nov_pipluspipn_105.root","g4hyptpc",4,10, 0.10,2.0, 5.0,10.0,/*excludeTilesCSV*/"",/*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
 //                                            4,10, 0.10,2.0, 5.0,10.0,
-//                                            /*excludeTilesCSV*/"",
-/*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
+//                                            4,10, 0.10,2.0, 5.0,10.0,/*excludeTilesCSV*/"",/*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
+//*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
 //
 #include "TFile.h"
 #include "TTree.h"
