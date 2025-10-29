@@ -1,38 +1,28 @@
 // -*- C++ -*-
-// Trigger_study_plusreaction_10_28_mpOnly.C
-// (2025-10-29 for jaejin; plus-beam OR-pair veto, reaction-only, MP-only exclusions)
+// Trigger_study_plusreaction_10_28_HTOFselect.C  (2025-10-29; plus-beam OR-pair veto)
+//   - MP>=2 판정에서만 HTOF {1,2,3,4}를 제외 (veto/페어 판정은 full-valid로 유지)
+//   - "배제 때문에 잃는" 이벤트를 2종 집계:
+//       (A) Lost_MP:  Beam && (MP_base>=2) && (MP_excl<2)
+//       (B) Lost_Trig2_*: Beam && (Trig2_base_*==true) && (MP_excl<2)  // *_=tight/fit/wide/ultra
 //
-// 목적: π+ (plus-beam) 리액션 하전입자(Origin tag)만으로 HTOF 기반 트리거/빔비토 요약
-//
-// BeamVeto (OR over adjacent HTOF pairs; copy-no):
+// Veto (OR over adjacent HTOF pairs; copy-no) for PLUS-beam:
 //   tight      : (17,18) OR (18,19)
 //   fit        : tight    OR (19,20)
 //   wide       : fit      OR (16,17)
 //   ultra-wide : wide     OR (20,21)
 //
 // Sections:
-//   Sec1: BH2 4–10  , MP-only excl {1,2,3,4}
-//   Sec2: BH2 4–9   , MP-only excl {1,2,3,4}
-//   Sec3: BH2 5–10  , MP-only excl {1,2,3,4}
-//   Sec4: BH2 4–10  , MP-only excl {0,1,2,3,4,5}
-//   Sec5: BH2 4–9   , MP-only excl {0,1,2,3,4,5}
-//   Sec6: BH2 5–10  , MP-only excl {0,1,2,3,4,5}
+//   Sec1: BH2 4–10      (Full Beam)   [MP-only exclusion = {1,2,3,4}]
+//   Sec2: BH2 4–9       (Narrow 1)    [MP-only exclusion = {1,2,3,4}]
+//   Sec3: BH2 5–10      (Narrow 2)    [MP-only exclusion = {1,2,3,4}]
 //
-// 정의 / 분모:
-//   Beam = BH2 in-range (옵션: 타겟터치 필터 통과)   ⇒ %는 모두 Beam 기준
-//   Overkill(%) = 100 × (BeamVeto / Beam)
+// Denominator for % : Beam = #events with BH2 in [lo,hi]
+// Overkill(%) = 100 × (BeamVeto / Beam)
 //
-// Reaction-only:
-//   HTOF의 vector<TParticle>에서 UniqueID==ORI_FORCED2PI_CHILD 만 사용.
-//   (초기 2000 evt에서 해당 태그가 안 보이면 경고 후 “모든 하전” 폴백)
-//
-// 사용 예:
+// Usage:
 //   root -l
-//   .L Trigger_study_plusreaction_10_28_mpOnly.C+
-//   Trigger_study_plusreaction_10_28_mpOnly("../rootfile/E45_Nov_pipluspipn_105.root","g4hyptpc",4,10, 0.10,2.0, 5.0,10.0,/*excludeTilesCSV*/"",/*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
-//                                            4,10, 0.10,2.0, 5.0,10.0,
-//                                            4,10, 0.10,2.0, 5.0,10.0,/*excludeTilesCSV*/"",/*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
-//*requireTargetHit*/true, /*targetBranch*/"Target", /*targetThickness_mm*/50.0);
+//   .L Trigger_study_plusreaction_10_28_HTOFselect.C+
+//   Trigger_study_plusreaction_10_28_HTOFselect("../rootfile/E45_Nov_beamplus_105.root","g4hyptpc",4,10, 0.10,2.0, 5.0,10.0, "");
 //
 #include "TFile.h"
 #include "TTree.h"
@@ -46,11 +36,11 @@
 #include <string>
 #include <iostream>
 #include <iomanip>
-#include <cmath>
 #include <sstream>
+#include <cmath>
 #include <algorithm>
 
-namespace TSPR {
+namespace TSPRsel {
 
 static const int    kNBH2Seg   = 15;     // 0..14
 static const double kBH2_x0    = -10.0;  // [mm]
@@ -58,19 +48,17 @@ static const double kBH2_pitch = 14.0;   // [mm]
 static const double kBH2_total = kNBH2Seg * kBH2_pitch;
 static const int    kNHTOF     = 34;     // 0..33
 
-// 프로젝트의 Origin 코드와 동기화 필요. 여기서는 다음과 같이 가정:
-static const int ORI_FORCED2PI_CHILD = 1;   // 리액션 자식(강제 2π)
-
 struct DictGuard {
-  DictGuard(){ gSystem->Load("libPhysics");
-               gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector"); }
+  DictGuard(){
+    gSystem->Load("libPhysics");
+    gInterpreter->GenerateDictionary("vector<TParticle>","TParticle.h;vector");
+  }
 };
 static DictGuard _dg;
 
 static inline double MIPThrMeV(double frac,double dEdx,double thk_mm){
   return frac * dEdx * (thk_mm*0.1); // mm→cm
 }
-
 static inline int MapBH2_WorldToSeg(double x, double, double){
   const double xloc = x - kBH2_x0;
   const double xmin = -0.5*kBH2_total, xmax = 0.5*kBH2_total;
@@ -79,50 +67,14 @@ static inline int MapBH2_WorldToSeg(double x, double, double){
   if(idx<0) idx=0; if(idx>=kNBH2Seg) idx=kNBH2Seg-1;
   return idx;
 }
-
-static inline bool IsChargedByPDG(int pdg){
-  if(pdg==0) return true; // SD에서 neutral 미기록 가정
-  const int a=std::abs(pdg);
-  return (a==211 || a==321 || a==2212 || a==11 || a==13);
+static inline bool PairHit(const std::set<int>& tiles, int a, int b){
+  return tiles.count(a) && tiles.count(b);
+}
+static inline double pct(long long a, long long b){
+  return (b>0)? (100.0 * double(a) / double(b)) : 0.0;
 }
 
-static inline double pct(long long a, long long b){ return (b>0)? (100.0*double(a)/double(b)) : 0.0; }
-
-// OR-기반 비토
-struct VetoFired { bool tight=false, fit=false, wide=false, ultra=false; };
-static inline bool HasPair(const std::set<int>& S, int a, int b){ return S.count(a)&&S.count(b); }
-static inline VetoFired EvalVetoOR(const std::set<int>& tiles){
-  const bool p1617 = HasPair(tiles,16,17);
-  const bool p1718 = HasPair(tiles,17,18);
-  const bool p1819 = HasPair(tiles,18,19);
-  const bool p1920 = HasPair(tiles,19,20);
-  const bool p2021 = HasPair(tiles,20,21);
-  VetoFired v;
-  v.tight = (p1718 || p1819);
-  v.fit   = (v.tight || p1920);
-  v.wide  = (v.fit   || p1617);
-  v.ultra = (v.wide  || p2021);
-  return v;
-}
-
-// Target 브랜치 선택 도우미
-static const char* PickTargetBranch(TTree* T, const char* preferred){
-  if(preferred && T->GetBranch(preferred)) return preferred;
-  if(T->GetBranch("Target"))    return "Target";
-  if(T->GetBranch("LH2"))       return "LH2";
-  if(T->GetBranch("TargetLH2")) return "TargetLH2";
-  return nullptr;
-}
-
-struct Counts {
-  long long N_total=0;     // 읽은 총 이벤트
-  long long N_used =0;     // 타겟 필터 통과(옵션) 후 남은 이벤트
-  long long N_beam =0;     // BH2 in [lo,hi]
-  long long N_trig1=0;     // Beam && (MP>=2)  [MP는 mp-only 제외 반영]
-  long long N_veto_tight=0, N_veto_fit=0, N_veto_wide=0, N_veto_ultra=0; // fired
-};
-
-// 공통 유틸: CSV → set<int>
+// parse "a,b,c" → {a,b,c}  (full-exclude)
 static std::set<int> ParseCSVInt(const char* csv){
   std::set<int> s; if(!csv) return s;
   std::stringstream ss(csv); std::string tok;
@@ -130,65 +82,69 @@ static std::set<int> ParseCSVInt(const char* csv){
   return s;
 }
 
-static Counts ProcessRange(TTree* T,
+// ---- Veto variants (PLUS-beam OR-pair logic; 16–21 중심) ----
+struct VetoFlags { bool tight=false, fit=false, wide=false, ultra=false; };
+static inline VetoFlags EvalVetoPlus_ORpairs(const std::set<int>& tiles){
+  const bool p16_17 = PairHit(tiles,16,17);
+  const bool p17_18 = PairHit(tiles,17,18);
+  const bool p18_19 = PairHit(tiles,18,19);
+  const bool p19_20 = PairHit(tiles,19,20);
+  const bool p20_21 = PairHit(tiles,20,21);
+
+  VetoFlags v;
+  v.tight = (p17_18 || p18_19);
+  v.fit   = (v.tight || p19_20);
+  v.wide  = (v.fit   || p16_17);
+  v.ultra = (v.wide  || p20_21);
+  return v;
+}
+
+struct Counts {
+  // base tallies
+  long long N_total=0;
+  long long N_beam =0;      // BH2 in [lo,hi]
+  long long N_trig1_base=0; // Beam && (MP_base>=2)
+
+  // veto fired (Beam && MP_base>=2에서 평가)
+  long long veto_tight=0, veto_fit=0, veto_wide=0, veto_ultra=0;
+
+  // "배제 때문에 잃는" 이벤트
+  long long Lost_MP=0;                 // Beam && MP_base>=2 && MP_excl<2
+  long long Lost_Trig2_tight=0;        // Beam && Trig2_base_tight && MP_excl<2
+  long long Lost_Trig2_fit=0;          // Beam && Trig2_base_fit   && MP_excl<2
+  long long Lost_Trig2_wide=0;         // Beam && Trig2_base_wide  && MP_excl<2
+  long long Lost_Trig2_ultra=0;        // Beam && Trig2_base_ultra && MP_excl<2
+
+  // diag: pair presence among Beam && MP_base>=2 (16–21 영역)
+  long long have16_17=0, have17_18=0, have18_19=0, have19_20=0, have20_21=0;
+};
+
+static Counts ProcessRange_HTOFselect(TTree* T,
                            int bh2_lo, int bh2_hi,
-                           double thrBH2, double thrHTOF, double thrTarget,
+                           double thrBH2, double thrHTOF,
                            bool hasBH2edep, bool hasHTOFedep,
-                           bool originSeen,
-                           bool requireTargetHit, const char* targetBranch,
-                           const std::set<int>& fullExclude,     // 멀티/비토 공통 제외
-                           const std::set<int>& mpOnlyExclude)   // 멀티 전용 제외
+                           const std::set<int>& fullExclude,   // multiplicity & veto 공통 제외
+                           const std::set<int>& mpOnlyExclude) // MP 계산에서만 제외 ({1,2,3,4})
 {
   std::vector<TParticle>* BH2=nullptr;   T->SetBranchAddress("BH2",&BH2);
   std::vector<TParticle>* HTOF=nullptr;  T->SetBranchAddress("HTOF",&HTOF);
   std::vector<double>* BH2_edep=nullptr; if(hasBH2edep)  T->SetBranchAddress("BH2_edep",&BH2_edep);
   std::vector<double>* HTOF_edep=nullptr;if(hasHTOFedep) T->SetBranchAddress("HTOF_edep",&HTOF_edep);
 
-  // 타겟 필터 (vector<TParticle> + *_edep 가정)
-  std::vector<TParticle>* TGT=nullptr; std::vector<double>* TGT_edep=nullptr;
-  if(requireTargetHit && targetBranch){
-    T->SetBranchAddress(targetBranch, &TGT);
-    std::string edn = std::string(targetBranch) + "_edep";
-    if(T->GetBranch(edn.c_str())) T->SetBranchAddress(edn.c_str(), &TGT_edep);
-  }
-
-  // 선택적 tgt_touch_flag(있으면 우선 사용)
-  const bool hasTgtFlag = (T->GetBranch("tgt_touch_flag") != nullptr);
-  int tgt_touch_flag=1; if(hasTgtFlag) T->SetBranchAddress("tgt_touch_flag",&tgt_touch_flag);
-
   Counts C;
-  const Long64_t N=T->GetEntries();
+  const Long64_t N = T->GetEntries();
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie); C.N_total++;
 
-    // --- Target filter ---
-    if(requireTargetHit){
-      bool pass=false;
-      if(hasTgtFlag){ pass = (tgt_touch_flag==1); }
-      else if(targetBranch){
-        double Etot=0.0;
-        if(TGT){
-          for(size_t i=0;i<TGT->size();++i){
-            const double ed=(TGT_edep && i<TGT_edep->size()) ? TGT_edep->at(i) : TGT->at(i).GetWeight();
-            Etot += ed;
-          }
-        }
-        pass = (Etot >= thrTarget);
-      }else{
-        pass = true; // 브랜치가 없으면 필터 미적용
-      }
-      if(!pass) continue;
-    }
-    C.N_used++;
-
-    // --- BH2 유효 세그먼트 ---
+    // ---- BH2: 유효 세그먼트
     std::map<int,double> bh2E;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
-        const TParticle& p=BH2->at(i);
-        int sid=MapBH2_WorldToSeg(p.Vx(),p.Vy(),p.Vz());
+        const TParticle& p = BH2->at(i);
+        int sid = MapBH2_WorldToSeg(p.Vx(),p.Vy(),p.Vz());
         if(0<=sid && sid<kNBH2Seg){
-          const double ed=(hasBH2edep && BH2_edep && i<BH2_edep->size()) ? BH2_edep->at(i) : p.GetWeight();
+          const double ed = (hasBH2edep && BH2_edep && i<BH2_edep->size())
+                            ? BH2_edep->at(i) : p.GetWeight();
           bh2E[sid]+=ed;
         }
       }
@@ -197,94 +153,154 @@ static Counts ProcessRange(TTree* T,
     for(const auto& kv:bh2E) if(kv.second>=thrBH2) bh2Valid.insert(kv.first);
 
     bool beam=false; for(int s:bh2Valid){ if(bh2_lo<=s && s<=bh2_hi){ beam=true; break; } }
-    if(!beam) continue;
-    C.N_beam++;
+    if(beam) C.N_beam++;
 
-    // --- HTOF: full-valid (비토/표시), mp-valid (멀티 전용) ---
+    // ---- HTOF: 두 경로로 집계
     std::map<int,double> htofE_full, htofE_mp;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
-        const TParticle& p=HTOF->at(i);
-        const int tid=p.GetStatusCode();
+        const TParticle& p = HTOF->at(i);
+        int tid = p.GetStatusCode();
         if(!(0<=tid && tid<kNHTOF)) continue;
-
-        // Reaction-only origin
-        if(originSeen){
-          if(p.GetUniqueID()!=ORI_FORCED2PI_CHILD) continue;
-          if(!IsChargedByPDG(p.GetPdgCode())) continue;
-        }else{
-          // Fallback: 모든 하전
-          if(!IsChargedByPDG(p.GetPdgCode())) continue;
-        }
 
         if(fullExclude.count(tid)) continue; // 완전 제외
 
-        const double ed=(hasHTOFedep && HTOF_edep && i<HTOF_edep->size()) ? HTOF_edep->at(i) : p.GetWeight();
-        htofE_full[tid]+=ed;
-        if(!mpOnlyExclude.count(tid)) htofE_mp[tid]+=ed; // mp-only 제외 반영
+        const double ed = (hasHTOFedep && HTOF_edep && i<HTOF_edep->size())
+                          ? HTOF_edep->at(i) : p.GetWeight();
+
+        htofE_full[tid]+=ed;                         // 항상 누적
+        if(!mpOnlyExclude.count(tid)) htofE_mp[tid]+=ed; // MP-only 제외 반영
       }
     }
     std::set<int> tiles_full, tiles_mp;
     for(const auto& kv:htofE_full) if(kv.second>=thrHTOF) tiles_full.insert(kv.first);
     for(const auto& kv:htofE_mp)   if(kv.second>=thrHTOF) tiles_mp.insert(kv.first);
 
-    const int mult = (int)tiles_mp.size();
-    if(mult<2) continue;
-    C.N_trig1++;
+    const int MP_base = (int)tiles_full.size();
+    const int MP_excl = (int)tiles_mp.size();
 
-    // --- 비토는 full-valid 세트로 평가 ---
-    const auto v = EvalVetoOR(tiles_full);
-    if(v.tight) C.N_veto_tight++;
-    if(v.fit)   C.N_veto_fit++;
-    if(v.wide)  C.N_veto_wide++;
-    if(v.ultra) C.N_veto_ultra++;
+    // ---- base Trig1 / Veto / Trig2
+    if(beam && MP_base>=2){
+      C.N_trig1_base++;
+
+      // 진단: 페어 존재(16–21)
+      const bool p16_17 = PairHit(tiles_full,16,17);
+      const bool p17_18 = PairHit(tiles_full,17,18);
+      const bool p18_19 = PairHit(tiles_full,18,19);
+      const bool p19_20 = PairHit(tiles_full,19,20);
+      const bool p20_21 = PairHit(tiles_full,20,21);
+      if(p16_17) C.have16_17++;
+      if(p17_18) C.have17_18++;
+      if(p18_19) C.have18_19++;
+      if(p19_20) C.have19_20++;
+      if(p20_21) C.have20_21++;
+
+      const VetoFlags v = EvalVetoPlus_ORpairs(tiles_full);
+      if(v.tight) C.veto_tight++;
+      if(v.fit)   C.veto_fit++;
+      if(v.wide)  C.veto_wide++;
+      if(v.ultra) C.veto_ultra++;
+
+      // (A) Lost_MP
+      if(MP_excl < 2) C.Lost_MP++;
+
+      // (B) Lost_Trig2_*
+      const bool Trig2_base_tight = (!v.tight);
+      const bool Trig2_base_fit   = (!v.fit);
+      const bool Trig2_base_wide  = (!v.wide);
+      const bool Trig2_base_ultra = (!v.ultra);
+
+      if(MP_excl < 2){
+        if(Trig2_base_tight) ++C.Lost_Trig2_tight;
+        if(Trig2_base_fit)   ++C.Lost_Trig2_fit;
+        if(Trig2_base_wide)  ++C.Lost_Trig2_wide;
+        if(Trig2_base_ultra) ++C.Lost_Trig2_ultra;
+      }
+    }
   }
   return C;
 }
 
-static void PrintSection(const char* title, const Counts& C, int lo, int hi,
-                         const std::set<int>& mpOnlyExclude)
-{
-  std::cout<<"\n== "<<title<<" | BH2 "<<lo<<"–"<<hi<<" ==\n";
-  std::cout<<"Total events (read)           : "<<C.N_total<<"\n";
-  std::cout<<"Target-used (after filter)    : "<<C.N_used <<"\n";
-  std::cout<<"Beam  (BH2 in-range)          : "<<C.N_beam<<"\n";
-  std::cout<<"Trig1 (Beam && MP>=2)         : "<<C.N_trig1<<"  ("<<std::fixed<<std::setprecision(3)<<pct(C.N_trig1, C.N_beam)<<" % of Beam)\n";
+struct PrintCfg {
+  long long baseBeamSec1=0; // 섹션1(BH2 4–10)의 Beam(스케일 기준)
+};
 
-  if(!mpOnlyExclude.empty()){
-    std::cout<<"[MP-only exclusion for multiplicity] ";
-    bool first=true; for(int t:mpOnlyExclude){ if(!first) std::cout<<","; first=false; std::cout<<t; }
-    std::cout<<"\n";
-  }
-
-  auto pr=[&](const char* name, long long Nveto){
-    const double overkill = pct(Nveto, C.N_beam);
-    std::cout<<"BeamVeto "<<std::setw(9)<<name<<": "
-             <<Nveto<<"  ("<<std::fixed<<std::setprecision(3)<<overkill<<" % of Beam)  "
-             <<"| Overkill = "<<std::setprecision(3)<<overkill<<" %\n";
+static void PrintSection(const char* title, const Counts& C, int lo, int hi, const PrintCfg& cfg){
+  auto pbeam = [&](long long x){ return pct(x, C.N_beam); };
+  auto scale_to_1M_Sec1 = [&](long long x)->long long{
+    if(cfg.baseBeamSec1<=0) return 0;
+    return (long long) llround( 1e6 * (double)x / (double)cfg.baseBeamSec1 );
   };
-  pr("tight", C.N_veto_tight);
-  pr("fit",   C.N_veto_fit);
-  pr("wide",  C.N_veto_wide);
-  pr("ultra", C.N_veto_ultra);
+  auto scale_to_1M_THIS = [&](long long x)->long long{
+    if(C.N_beam<=0) return 0;
+    return (long long) llround( 1e6 * (double)x / (double)C.N_beam );
+  };
+
+  std::cout<<"\n== "<<title<<" | BH2 "<<lo<<"–"<<hi<<" ==\n";
+  std::cout<<"Total events                 : "<<C.N_total<<"\n";
+  std::cout<<"Beam  (BH2 in-range)         : "<<C.N_beam<<"\n";
+  std::cout<<"Trig1_base (Beam && MP_base>=2) : "<<C.N_trig1_base<<"\n";
+
+  std::cout<<std::fixed<<std::setprecision(3);
+  std::cout<<"[BeamVeto fired | Beam-based %]\n";
+  std::cout<<"  tight      : "<<C.veto_tight<<"  ("<<pbeam(C.veto_tight)<<" % of Beam)\n";
+  std::cout<<"  fit        : "<<C.veto_fit  <<"  ("<<pbeam(C.veto_fit)  <<" % of Beam)\n";
+  std::cout<<"  wide       : "<<C.veto_wide <<"  ("<<pbeam(C.veto_wide) <<" % of Beam)\n";
+  std::cout<<"  ultra      : "<<C.veto_ultra<<"  ("<<pbeam(C.veto_ultra)<<" % of Beam)\n";
+
+  std::cout<<"[Overkill (%) = 100 × BeamVeto / Beam]\n";
+  std::cout<<"  tight      : "<<pbeam(C.veto_tight)<<"\n";
+  std::cout<<"  fit        : "<<pbeam(C.veto_fit)  <<"\n";
+  std::cout<<"  wide       : "<<pbeam(C.veto_wide) <<"\n";
+  std::cout<<"  ultra      : "<<pbeam(C.veto_ultra)<<"\n";
+
+  // --- NEW: 배제 때문에 잃는 이벤트 ---
+  std::cout<<"[LOSS due to MP-only exclusion of HTOF {1,2,3,4}]  (Beam-based %, + scaled counts)\n";
+  std::cout<<"  Lost_MP (Beam && MP_base>=2 → MP_excl<2)\n";
+  std::cout<<"    count="<<C.Lost_MP<<", frac="<<pbeam(C.Lost_MP)<<" %"
+           <<", scaled@Beam(THIS=1e6)="<<scale_to_1M_THIS(C.Lost_MP)
+           <<", scaled@Beam(4-10=1e6)="<<scale_to_1M_Sec1(C.Lost_MP)<<"\n";
+
+  std::cout<<"  Lost_Trig2_tight (base Trig2_tight survived → MP_excl<2 → drop)\n";
+  std::cout<<"    count="<<C.Lost_Trig2_tight<<", frac="<<pbeam(C.Lost_Trig2_tight)<<" %"
+           <<", scaled@THIS="<<scale_to_1M_THIS(C.Lost_Trig2_tight)
+           <<", scaled@Sec1="<<scale_to_1M_Sec1(C.Lost_Trig2_tight)<<"\n";
+
+  std::cout<<"  Lost_Trig2_fit   (base Trig2_fit   survived → MP_excl<2 → drop)\n";
+  std::cout<<"    count="<<C.Lost_Trig2_fit<<", frac="<<pbeam(C.Lost_Trig2_fit)<<" %"
+           <<", scaled@THIS="<<scale_to_1M_THIS(C.Lost_Trig2_fit)
+           <<", scaled@Sec1="<<scale_to_1M_Sec1(C.Lost_Trig2_fit)<<"\n";
+
+  std::cout<<"  Lost_Trig2_wide  (base Trig2_wide  survived → MP_excl<2 → drop)\n";
+  std::cout<<"    count="<<C.Lost_Trig2_wide<<", frac="<<pbeam(C.Lost_Trig2_wide)<<" %"
+           <<", scaled@THIS="<<scale_to_1M_THIS(C.Lost_Trig2_wide)
+           <<", scaled@Sec1="<<scale_to_1M_Sec1(C.Lost_Trig2_wide)<<"\n";
+
+  std::cout<<"  Lost_Trig2_ultra (base Trig2_ultra survived → MP_excl<2 → drop)\n";
+  std::cout<<"    count="<<C.Lost_Trig2_ultra<<", frac="<<pbeam(C.Lost_Trig2_ultra)<<" %"
+           <<", scaled@THIS="<<scale_to_1M_THIS(C.Lost_Trig2_ultra)
+           <<", scaled@Sec1="<<scale_to_1M_Sec1(C.Lost_Trig2_ultra)<<"\n";
+
+  // 진단: 페어 존재 빈도(16–21)
+  std::cout<<"[Diag] Pair presence within (Beam && MP_base>=2):\n";
+  std::cout<<"  (16,17)="<<C.have16_17<<", (17,18)="<<C.have17_18
+           <<", (18,19)="<<C.have18_19<<", (19,20)="<<C.have19_20
+           <<", (20,21)="<<C.have20_21<<"\n";
 }
 
-} // namespace TSPR
+} // namespace TSPRsel
 
 
-void Trigger_study_plusreaction_10_28_mpOnly(const char* filename,
-                                             const char* treename="g4hyptpc",
-                                             int bh2_lo=4, int bh2_hi=10,
-                                             double mipFrac=0.10,
-                                             double mipMeVperCm=2.0,
-                                             double BH2_thickness_mm=5.0,
-                                             double HTOF_thickness_mm=10.0,
-                                             const char* excludeTilesCSV="",
-                                             bool   requireTargetHit=true,
-                                             const char* targetBranch="Target",
-                                             double targetThickness_mm=50.0)
+void Trigger_study_plusreaction_10_28_HTOFselect(const char* filename,
+                                       const char* treename="g4hyptpc",
+                                       int bh2_lo=4, int bh2_hi=10,
+                                       double mipFrac=0.10,
+                                       double mipMeVperCm=2.0,
+                                       double BH2_thickness_mm=5.0,
+                                       double HTOF_thickness_mm=10.0,
+                                       const char* excludeTilesCSV="" ) // e.g. "17,18" (full-exclude)
 {
-  using namespace TSPR;
+  using namespace TSPRsel;
 
   // open
   TFile* f=TFile::Open(filename,"READ");
@@ -297,97 +313,38 @@ void Trigger_study_plusreaction_10_28_mpOnly(const char* filename,
   const bool hasBH2edep  = (T->GetBranch("BH2_edep")  != nullptr);
   const bool hasHTOFedep = (T->GetBranch("HTOF_edep") != nullptr);
 
-  // thresholds
-  const double thrBH2   = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);
-  const double thrHTOF  = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);
-  const double thrTgt   = MIPThrMeV(mipFrac,mipMeVperCm,targetThickness_mm);
-
-  // full exclude: 멀티/비토 공통 제외 (필요 없으면 "")
+  // thresholds & excludes
+  const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);
+  const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);
   auto fullExclude = ParseCSVInt(excludeTilesCSV);
-
-  // target branch 결정
-  const char* tgtBr = requireTargetHit ? PickTargetBranch(T, targetBranch) : nullptr;
-  if(requireTargetHit && !tgtBr && !T->GetBranch("tgt_touch_flag")){
-    std::cout<<"[WARN] Target branch/flag not found; target filter disabled.\n";
-  }
-
-  // origin tag 빠른 탐색
-  bool originSeen=false;
-  {
-    std::vector<TParticle>* HTOF=nullptr;  T->SetBranchAddress("HTOF",&HTOF);
-    const Long64_t Npeek=std::min<Long64_t>(T->GetEntries(), 2000);
-    for(Long64_t ie=0; ie<Npeek && !originSeen; ++ie){
-      T->GetEntry(ie);
-      if(!HTOF) continue;
-      for(size_t i=0;i<HTOF->size();++i){
-        if(HTOF->at(i).GetUniqueID()==ORI_FORCED2PI_CHILD){ originSeen=true; break; }
-      }
-    }
-    if(!originSeen){
-      std::cerr<<"[WARN] No HTOF hit has UniqueID==kForced2PiChild in first "<<Npeek
-               <<" events. Falling back to 'ALL charged hits'.\n";
-    }
-  }
+  const std::set<int> mpOnlyExclude = {1,2,3,4}; // MP계산에서만 1–4 제외 (요청 유지)
 
   std::cout<<std::fixed<<std::setprecision(3)
-           <<"[INFO] BH2 thr="<<thrBH2<<" MeV, HTOF thr="<<thrHTOF<<" MeV"
-           <<", Target thr="<<thrTgt<<" MeV | "
-           <<"BH2 range (Sec1) "<<bh2_lo<<"-"<<bh2_hi
-           <<", Reaction-origin "<<(originSeen? "DETECTED":"MISSING→FALLBACK")<<"\n";
+           <<"[INFO] BH2 thr="<<thrBH2<<" MeV, HTOF thr="<<thrHTOF<<" MeV\n";
   if(!fullExclude.empty()){
-    std::cout<<"[INFO] FULL EXCLUDE tiles (both mult & veto): ";
+    std::cout<<"[INFO] FULL-EXCLUDE (mult & veto): ";
     bool first=true; for(int t:fullExclude){ if(!first) std::cout<<","; first=false; std::cout<<t; }
     std::cout<<"\n";
   }
+  std::cout<<"[INFO] MP-only EXCLUDE for multiplicity: 1,2,3,4 (veto는 full-valid로 평가)\n";
 
-  // Sections
-  const int S1_lo=bh2_lo, S1_hi=bh2_hi;
-  const int S2_lo=4,      S2_hi=9;
-  const int S3_lo=5,      S3_hi=10;
+  // sections
+  const int s1_lo = bh2_lo, s1_hi = bh2_hi; // Full (4–10)
+  const int s2_lo = 4,      s2_hi = 9;      // Narrow 1
+  const int s3_lo = 5,      s3_hi = 10;     // Narrow 2
 
-  // MP-only exclusion sets
-  const std::set<int> MP_EXCL_1_3 = {1,2,3,4};
-  const std::set<int> MP_EXCL_4_6 = {0,1,2,3,4,5};
+  auto C1 = ProcessRange_HTOFselect(T, s1_lo, s1_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep,
+                                    fullExclude, mpOnlyExclude);
+  auto C2 = ProcessRange_HTOFselect(T, s2_lo, s2_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep,
+                                    fullExclude, mpOnlyExclude);
+  auto C3 = ProcessRange_HTOFselect(T, s3_lo, s3_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep,
+                                    fullExclude, mpOnlyExclude);
 
-  // Run 1–3 (mp-only {1,2,3,4})
-  auto C1 = ProcessRange(T, S1_lo, S1_hi, thrBH2, thrHTOF, thrTgt,
-                         hasBH2edep, hasHTOFedep,
-                         originSeen,
-                         requireTargetHit, tgtBr,
-                         fullExclude, MP_EXCL_1_3);
-  auto C2 = ProcessRange(T, S2_lo, S2_hi, thrBH2, thrHTOF, thrTgt,
-                         hasBH2edep, hasHTOFedep,
-                         originSeen,
-                         requireTargetHit, tgtBr,
-                         fullExclude, MP_EXCL_1_3);
-  auto C3 = ProcessRange(T, S3_lo, S3_hi, thrBH2, thrHTOF, thrTgt,
-                         hasBH2edep, hasHTOFedep,
-                         originSeen,
-                         requireTargetHit, tgtBr,
-                         fullExclude, MP_EXCL_1_3);
+  // 스케일 기준(Beam 4–10 = 1,000,000)
+  TSPRsel::PrintCfg cfg;
+  cfg.baseBeamSec1 = C1.N_beam;
 
-  // Run 4–6 (mp-only {0,1,2,3,4,5})
-  auto C4 = ProcessRange(T, S1_lo, S1_hi, thrBH2, thrHTOF, thrTgt,
-                         hasBH2edep, hasHTOFedep,
-                         originSeen,
-                         requireTargetHit, tgtBr,
-                         fullExclude, MP_EXCL_4_6);
-  auto C5 = ProcessRange(T, S2_lo, S2_hi, thrBH2, thrHTOF, thrTgt,
-                         hasBH2edep, hasHTOFedep,
-                         originSeen,
-                         requireTargetHit, tgtBr,
-                         fullExclude, MP_EXCL_4_6);
-  auto C6 = ProcessRange(T, S3_lo, S3_hi, thrBH2, thrHTOF, thrTgt,
-                         hasBH2edep, hasHTOFedep,
-                         originSeen,
-                         requireTargetHit, tgtBr,
-                         fullExclude, MP_EXCL_4_6);
-
-  // Print
-  PrintSection("Section 1 (Full Beam) MP-excl{1,2,3,4}",      C1, S1_lo, S1_hi, MP_EXCL_1_3);
-  PrintSection("Section 2 (Narrow 1)  MP-excl{1,2,3,4}",      C2, S2_lo, S2_hi, MP_EXCL_1_3);
-  PrintSection("Section 3 (Narrow 2)  MP-excl{1,2,3,4}",      C3, S3_lo, S3_hi, MP_EXCL_1_3);
-  PrintSection("Section 4 (Full Beam) MP-excl{0,1,2,3,4,5}",  C4, S1_lo, S1_hi, MP_EXCL_4_6);
-  PrintSection("Section 5 (Narrow 1)  MP-excl{0,1,2,3,4,5}",  C5, S2_lo, S2_hi, MP_EXCL_4_6);
-  PrintSection("Section 6 (Narrow 2)  MP-excl{0,1,2,3,4,5}",  C6, S3_lo, S3_hi, MP_EXCL_4_6);
+  TSPRsel::PrintSection("Section 1 (Full Beam, MP-only excl {1,2,3,4})", C1, s1_lo, s1_hi, cfg);
+  TSPRsel::PrintSection("Section 2 (Narrow 1, MP-only excl {1,2,3,4})",  C2, s2_lo, s2_hi, cfg);
+  TSPRsel::PrintSection("Section 3 (Narrow 2, MP-only excl {1,2,3,4})",  C3, s3_lo, s3_hi, cfg);
 }
