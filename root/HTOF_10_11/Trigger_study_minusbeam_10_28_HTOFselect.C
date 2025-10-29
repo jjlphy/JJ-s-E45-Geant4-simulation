@@ -1,53 +1,16 @@
 // -*- C++ -*-
-// Trigger_study_minusbeam_10_28_HTOFselect.C  (2025-10-28 for jaejin)
+// Trigger_study_minusbeam_10_28_HTOFselect.C  (2025-10-28 for jaejin; +combos print)
 // Minus-beam version with OR-based BeamVeto over adjacent HTOF pairs.
 //
 // NEW in this revision:
-//   - Added Section0 (baseline, no MP-only exclusion) and reports:
-//       * N( Beam && MP>=2 && hits any of {1..4} )
-//       * N( Beam && MP>=2 && hits any of {0..5} )
-//     with absolute counts and Beam-based %.
-//   - Sections 1–3 : MP-only exclusion {1,2,3,4} (veto uses full set)
-//   - Sections 4–6 : MP-only exclusion {0,1,2,3,4,5} (veto uses full set)
-//
-// Sections (now 7 in total):
-//   Sec0: BH2 4–10 (Baseline, no MP-only exclusion) → report MP≥2∧hit(1–4) and MP≥2∧hit(0–5)
-//   Sec1: BH2 4–10 (Full Beam)   , MP-excl {1,2,3,4}
-//   Sec2: BH2 4–9  (Narrow 1)    , MP-excl {1,2,3,4}
-//   Sec3: BH2 5–10 (Narrow 2)    , MP-excl {1,2,3,4}
-//   Sec4: BH2 4–10 (Full Beam)   , MP-excl {0,1,2,3,4,5}
-//   Sec5: BH2 4–9  (Narrow 1)    , MP-excl {0,1,2,3,4,5}
-//   Sec6: BH2 5–10 (Narrow 2)    , MP-excl {0,1,2,3,4,5}
-//
-// Trigger logic (각 섹션 공통):
-//   Beam   = (BH2 in [lo,hi])
-//   Trig1  = Beam && (HTOF multiplicity >= 2)   // using MP-only exclusion set of the section
-//   Trig2* = Trig1 && !BeamVeto(*)
-//
-// BeamVeto (인접 페어 = 두 타일 동시 히트; 콤마는 AND):
-//   pair(a,b) := (tile a) && (tile b)
-//   tight      : pair(20,21) OR pair(21,22)
-//   fit        : tight       OR pair(22,23)
-//   wide       : fit         OR pair(19,20)
-//   ultra-wide : wide        OR pair(23,24)
-//   ※ 비토는 "전체 유효 타일"로 판정 (MP-only 제외는 적용하지 않음)
-//
-// Denominator for % : Beam(= BH2 in-range) 이벤트 개수
-// 출력(각 섹션):
-//  - 절대 개수 + Beam 기준 %
-//  - Beam Veto efficiency = 100% - (Trig2/Beam)*100   (소수점 3자리)
-//  - Beam-induced background (counts) @ Beam=1,000,000
-//  - Section0 추가 리포트: MP≥2∧hit(1–4), MP≥2∧hit(0–5) (절대/퍼센트)
-//
-// 옵션 excludeTilesCSV: 완전 제외(멀티/비토 둘 다에서) 디버그용 추가 마스크.
-//   예: "20,21" → 해당 타일은 멀티·비토 모두에서 무시.
-//   본 요청의 MP-only 제외는 여기에 더해 따로 적용됨.
+//   - Section0 baseline 보고 (변경 없음)
+//   - 각 섹션/비토(=tight/fit/wide/ultra) 컷 생존자에 대해
+//     "정확한 타일 세트" 조합을 전수 집계하여 터미널에 출력.
 //
 // 사용:
 //   root -l
 //   .L Trigger_study_minusbeam_10_28_HTOFselect.C+
-//   Trigger_study_minusbeam_10_28_HTOFselect("../rootfile/E45_Nov_beamminus_098.root","g4hyptpc",
-//                                            4,10, 0.10,2.0, 5.0,10.0, "");
+//   Trigger_study_minusbeam_10_28_HTOFselect("E45.root","g4hyptpc",4,10,0.10,2.0,5.0,10.0,"");
 //
 #include "TFile.h"
 #include "TTree.h"
@@ -100,6 +63,14 @@ static std::set<int> ParseCSVInt(const char* csv){
   return s;
 }
 
+// ----- 유틸: 세트 → 정렬된 콤마 문자열 키 "5,20,23"
+static std::string KeyFromSet(const std::set<int>& tiles){
+  if(tiles.empty()) return std::string("-");
+  std::ostringstream os; bool first=true;
+  for(int t: tiles){ if(!first) os<<","; first=false; os<<t; }
+  return os.str();
+}
+
 // ===== OR-logic BeamVeto over adjacent pairs (minus-beam, centered 19–24) =====
 static inline bool PairHit(const std::set<int>& tiles, int a, int b){
   return tiles.count(a) && tiles.count(b);
@@ -134,6 +105,12 @@ struct Counts {
   // Section0 전용 리포트: MP≥2 ∧ hit(1–4) / hit(0–5)
   long long N_trig1_with_1_4 = 0;
   long long N_trig1_with_0_5 = 0;
+
+  // ★ 생존자 타일-세트 조합 집계 (정확한 세트 키로 중복 제거)
+  std::map<std::string,long long> Comb_tight;
+  std::map<std::string,long long> Comb_fit;
+  std::map<std::string,long long> Comb_wide;
+  std::map<std::string,long long> Comb_ultra;
 };
 
 static Counts ProcessRange_HTOFselect(TTree* T,
@@ -170,24 +147,19 @@ static Counts ProcessRange_HTOFselect(TTree* T,
     bool beam=false; for(int s:bh2Valid){ if(bh2_lo<=s && s<=bh2_hi){ beam=true; break; } }
     if(beam) C.N_beam++;
 
-    // ---- HTOF valid accumulation (two paths):
-    // path A: "fullValid" = 완전제외(fullExclude)만 적용 → Veto/집합표시용
-    // path B: "mpValid"   = 완전제외 + MP-only 제외(mpOnlyExclude) → multiplicity 판정용
+    // ---- HTOF valid accumulation
     std::map<int,double> htofE_full, htofE_mp;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
         const TParticle& p=HTOF->at(i);
-        int tid = p.GetStatusCode();
+        int tid = p.GetStatusCode();                              // ★ copy-no 기반
         if(!(0<=tid && tid<kNHTOF)) continue;
 
-        // 완전 제외 마스크: 둘 다에서 제외
-        if(fullExclude.count(tid)) continue;
+        if(fullExclude.count(tid)) continue;                      // 완전 제외
 
         const double ed=(hasHTOFedep && HTOF_edep && i<HTOF_edep->size())? HTOF_edep->at(i) : p.GetWeight();
-        // fullValid에 먼저 누적
-        htofE_full[tid]+=ed;
-        // mpValid는 mpOnlyExclude에 걸리면 배제
-        if(!mpOnlyExclude.count(tid)) htofE_mp[tid]+=ed;
+        htofE_full[tid]+=ed;                                      // full-valid (비토/표시용)
+        if(!mpOnlyExclude.count(tid)) htofE_mp[tid]+=ed;          // mp-valid  (멀티 판정용)
       }
     }
 
@@ -195,7 +167,7 @@ static Counts ProcessRange_HTOFselect(TTree* T,
     for(const auto& kv:htofE_full) if(kv.second>=thrHTOF) tiles_full.insert(kv.first);
     for(const auto& kv:htofE_mp)   if(kv.second>=thrHTOF) tiles_mp.insert(kv.first);
 
-    const int mult = (int)tiles_mp.size();  // MP>=2는 mp-only exclusion이 반영된 집합으로 평가
+    const int mult = (int)tiles_mp.size();
 
     // presence (diagnostic; fullValid 기준)
     if(tiles_full.count(19)) C.have19++;
@@ -205,17 +177,19 @@ static Counts ProcessRange_HTOFselect(TTree* T,
     if(tiles_full.count(23)) C.have23++;
     if(tiles_full.count(24)) C.have24++;
 
-    // ---- Trig1 & Trig2(*)  (Veto는 tiles_full로 평가!)
+    // ---- Trig1 & Trig2(*) (비토는 tiles_full 기준)
     if(beam && mult>=2){
       C.N_trig1++;
       const auto v = EvalVeto_ORpairs(tiles_full);
-      if(!v.tight) C.N_trig2_tight++; else C.N_veto_tight++;
-      if(!v.fit)   C.N_trig2_fit++;   else C.N_veto_fit++;
-      if(!v.wide)  C.N_trig2_wide++;  else C.N_veto_wide++;
-      if(!v.ultra) C.N_trig2_ultra++; else C.N_veto_ultra++;
+      const std::string key = KeyFromSet(tiles_full);  // ★ 정확한 세트 키
 
-      // ----- Section0 전용 집계: MP≥2 ∧ hit(1–4), MP≥2 ∧ hit(0–5) -----
-      bool hit_1_4 = false, hit_0_5 = false;
+      if(!v.tight){ C.N_trig2_tight++; C.Comb_tight[key]++; } else { C.N_veto_tight++; }
+      if(!v.fit)  { C.N_trig2_fit++;   C.Comb_fit[key]++;   } else { C.N_veto_fit++;   }
+      if(!v.wide) { C.N_trig2_wide++;  C.Comb_wide[key]++;  } else { C.N_veto_wide++;  }
+      if(!v.ultra){C.N_trig2_ultra++;  C.Comb_ultra[key]++; } else { C.N_veto_ultra++; }
+
+      // ----- Section0 리포트용(키는 쓰지 않음)
+      bool hit_1_4=false, hit_0_5=false;
       for(int t=1; t<=4; ++t) if(tiles_full.count(t)) { hit_1_4=true; break; }
       for(int t=0; t<=5; ++t) if(tiles_full.count(t)) { hit_0_5=true; break; }
       if(hit_1_4) C.N_trig1_with_1_4++;
@@ -223,6 +197,24 @@ static Counts ProcessRange_HTOFselect(TTree* T,
     }
   }
   return C;
+}
+
+static void PrintCombos(const char* head,
+                        const std::map<std::string,long long>& M)
+{
+  // count 내림차순, 키 오름차순 정렬
+  std::vector<std::pair<std::string,long long>> v(M.begin(), M.end());
+  std::sort(v.begin(), v.end(),
+            [](auto& a, auto& b){
+              if(a.second!=b.second) return a.second>b.second;
+              return a.first<b.first;
+            });
+  std::cout<<head<<"\n";
+  for(const auto& kv: v){
+    // 출력 형식: comb(20,23): 13
+    std::cout<<"  comb("<<kv.first<<"): "<<kv.second<<"\n";
+  }
+  if(v.empty()) std::cout<<"  (none)\n";
 }
 
 static void PrintSection(const char* title, const Counts& C, int lo, int hi,
@@ -240,7 +232,6 @@ static void PrintSection(const char* title, const Counts& C, int lo, int hi,
   std::cout<<"Total events                 : "<<C.N_total<<"\n";
   std::cout<<"Beam  (BH2 in-range)         : "<<C.N_beam<<"\n";
 
-  // MP-only exclusion 표시
   if(!mpOnlyExclude.empty()){
     std::cout<<"[MP-only exclusion for multiplicity] ";
     bool first=true; for(int t:mpOnlyExclude){ if(!first) std::cout<<","; first=false; std::cout<<t; }
@@ -286,6 +277,12 @@ static void PrintSection(const char* title, const Counts& C, int lo, int hi,
   std::cout<<"[Tile presence among Beam events (full-valid, for diagnosis)]\n";
   std::cout<<"  have19="<<C.have19<<", have20="<<C.have20<<", have21="<<C.have21
            <<", have22="<<C.have22<<", have23="<<C.have23<<", have24="<<C.have24<<"\n";
+
+  // ★ 생존자 조합 목록도 출력
+  PrintCombos("== Survived combinations (tight) ==", C.Comb_tight);
+  PrintCombos("== Survived combinations (fit) ==",   C.Comb_fit);
+  PrintCombos("== Survived combinations (wide) ==",  C.Comb_wide);
+  PrintCombos("== Survived combinations (ultra) ==", C.Comb_ultra);
 }
 
 // ---- Section0 전용 출력 (Baseline; MP-only exclusion 없음) ----
@@ -347,9 +344,9 @@ void Trigger_study_minusbeam_10_28_HTOFselect(const char* filename,
   // MP-only exclusion sets
   const std::set<int> MP_EXCL_1_3 = {1,2,3,4};
   const std::set<int> MP_EXCL_4_6 = {0,1,2,3,4,5};
+  const std::set<int> MP_EXCL_0   = {}; // none
 
   // ---- Section 0 (Baseline; no MP-only exclusion) ----
-  const std::set<int> MP_EXCL_0 = {}; // none
   auto C0 = ProcessRange_HTOFselect(T, S1_lo, S1_hi, thrBH2, thrHTOF,
                                     hasBH2edep, hasHTOFedep, fullExclude, MP_EXCL_0);
   PrintSection0(C0, S1_lo, S1_hi);
@@ -370,7 +367,7 @@ void Trigger_study_minusbeam_10_28_HTOFselect(const char* filename,
   auto C6 = ProcessRange_HTOFselect(T, S3_lo, S3_hi, thrBH2, thrHTOF, hasBH2edep, hasHTOFedep,
                                     fullExclude, MP_EXCL_4_6);
 
-  // Print 1–6
+  // Print 1–6 with combo lists
   PrintSection("Section 1 (Full Beam) MP-excl{1,2,3,4}", C1, S1_lo, S1_hi, MP_EXCL_1_3);
   PrintSection("Section 2 (Narrow 1) MP-excl{1,2,3,4}",  C2, S2_lo, S2_hi, MP_EXCL_1_3);
   PrintSection("Section 3 (Narrow 2) MP-excl{1,2,3,4}",  C3, S3_lo, S3_hi, MP_EXCL_1_3);
