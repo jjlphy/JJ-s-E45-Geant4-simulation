@@ -29,7 +29,7 @@
 // Usage:
 //   root -l
 //   .L Trigger_study_minusreaction_10_28_HTOFselect.C+
-//   Trigger_study_minusreaction_10_28_HTOFselect("../rootfile/E45_Nov_beamminus_105.root","g4hyptpc",
+//   Trigger_study_minusreaction_10_28_HTOFselect("../rootfile/E45_Nov_beamminus_105.root","g4hyptpc",4,10, 0.10,2.0, 5.0,10.0, "");
 //                                                4,10, 0.10,2.0, 5.0,10.0, "");
 //
 #include "TFile.h"
