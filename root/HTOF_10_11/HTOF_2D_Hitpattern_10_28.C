@@ -1,16 +1,16 @@
 // -*- C++ -*-
 // HTOF_2D_Hitpattern_10_28.C
 // 2025-10-28 (for jaejin)
-// 목적:
-//   HTOF 34타일(0..33)을 사용해 2D 힛패턴 생성:
+// 목적(업데이트):
+//   HTOF 34타일(0..33)로 2D 힛패턴 생성:
 //     (A) π+  vs  π−
-//     (B) p   vs  p̄
+//     (B) π−  vs  p        <-- [NEW] 추가
 //     (C) π+  vs  p
-//   그리고 파이(π± 합친) 1D 타일 점유도도 생성.
+//   그리고 π(± 합친) 1D 타일 점유도 생성.
 //   각 히스토그램은
-//     1) BH2 seg 4–10 조건만 적용한 버전,
+//     1) BH2 seg 4–10 조건만 적용,
 //     2) BH2 seg 4–10 && HTOF multiplicity≥2 버전
-//   두 벌을 모두 그립니다.
+//   두 벌 모두 그림.
 //
 // 가정/정책:
 //   - 입력 TTree: <treename> (기본: "g4hyptpc")
@@ -19,7 +19,7 @@
 //       vector<double>   BH2_edep, HTOF_edep (있으면 사용; 없으면 TParticle::Weight())
 //   - BH2 seg ID 매핑: E72-like (x좌표→seg).
 //   - VALID HTOF hit: 타일별 ΣEdep ≥ threshold
-//   - HTOF multiplicity: VALID 타일의 개수(입자종 구분 없이 union)
+//   - HTOF multiplicity: VALID 타일 개수(입자종 구분 없이 union)
 //
 // 사용법(예):
 //   root -l
@@ -128,21 +128,32 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
 
   // ---------------- Histograms ----------------
   const int NT = 34; // HTOF tiles 0..33
+
+  // π+ vs π−
   TH2I* h2_pip_pim_BH2        = new TH2I("h2_pip_pim_BH2",
-    "HTOF 2D: #pi^{+} vs #pi^{-} | BH2 4-10;#pi^{+} tile;#pi^{-} tile", NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
+    "HTOF 2D: #pi^{+} vs #pi^{-} | BH2 4-10;#pi^{+} tile;#pi^{-} tile",
+    NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
   TH2I* h2_pip_pim_BH2_MPge2  = new TH2I("h2_pip_pim_BH2_MPge2",
-    "HTOF 2D: #pi^{+} vs #pi^{-} | BH2 4-10 & MP#geq2;#pi^{+} tile;#pi^{-} tile", NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
+    "HTOF 2D: #pi^{+} vs #pi^{-} | BH2 4-10 & MP#geq2;#pi^{+} tile;#pi^{-} tile",
+    NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
 
-  TH2I* h2_p_pbar_BH2         = new TH2I("h2_p_pbar_BH2",
-    "HTOF 2D: p vs #bar{p} | BH2 4-10;p tile;#bar{p} tile", NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
-  TH2I* h2_p_pbar_BH2_MPge2   = new TH2I("h2_p_pbar_BH2_MPge2",
-    "HTOF 2D: p vs #bar{p} | BH2 4-10 & MP#geq2;p tile;#bar{p} tile", NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
+  // π− vs p  <--- [NEW] 추가
+  TH2I* h2_pim_p_BH2          = new TH2I("h2_pim_p_BH2",
+    "HTOF 2D: #pi^{-} vs p | BH2 4-10;#pi^{-} tile;p tile",
+    NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
+  TH2I* h2_pim_p_BH2_MPge2    = new TH2I("h2_pim_p_BH2_MPge2",
+    "HTOF 2D: #pi^{-} vs p | BH2 4-10 & MP#geq2;#pi^{-} tile;p tile",
+    NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
 
+  // π+ vs p  (기존 유지)
   TH2I* h2_pip_p_BH2          = new TH2I("h2_pip_p_BH2",
-    "HTOF 2D: #pi^{+} vs p | BH2 4-10;#pi^{+} tile;p tile", NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
+    "HTOF 2D: #pi^{+} vs p | BH2 4-10;#pi^{+} tile;p tile",
+    NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
   TH2I* h2_pip_p_BH2_MPge2    = new TH2I("h2_pip_p_BH2_MPge2",
-    "HTOF 2D: #pi^{+} vs p | BH2 4-10 & MP#geq2;#pi^{+} tile;p tile", NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
+    "HTOF 2D: #pi^{+} vs p | BH2 4-10 & MP#geq2;#pi^{+} tile;p tile",
+    NT, -0.5, NT-0.5, NT, -0.5, NT-0.5);
 
+  // π(±) 1D 점유도 (두 조건 각각)
   TH1I* h1_piOcc_BH2          = new TH1I("h1_piOcc_BH2",
     "HTOF 1D: #pi tile occupancy | BH2 4-10;tile;events", NT, -0.5, NT-0.5);
   TH1I* h1_piOcc_BH2_MPge2    = new TH1I("h1_piOcc_BH2_MPge2",
@@ -208,7 +219,7 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
         if      (pdg==PDG_PIP ) E_tile_pip [tile] += ed;
         else if (pdg==PDG_PIM ) E_tile_pim [tile] += ed;
         else if (pdg==PDG_P   ) E_tile_p   [tile] += ed;
-        else if (pdg==PDG_PBAR) E_tile_pbar[tile] += ed;
+        else if (pdg==PDG_PBAR) E_tile_pbar[tile] += ed; // p̄는 집계만(그림은 사용 안 함)
       }
     }
 
@@ -222,13 +233,13 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
 
     const int mp_all = (int)tiles_all.size();
 
-    // ===== (1) BH2만 적용(무조건) =====
+    // ===== (1) BH2만 적용 =====
     // π+ vs π−
     for(int a: tiles_pip) for(int b: tiles_pim) h2_pip_pim_BH2->Fill(a,b);
-    // p vs pbar
-    for(int a: tiles_p) for(int b: tiles_pbar) h2_p_pbar_BH2->Fill(a,b);
-    // π+ vs p
-    for(int a: tiles_pip) for(int b: tiles_p) h2_pip_p_BH2->Fill(a,b);
+    // π− vs p   [NEW]
+    for(int a: tiles_pim) for(int b: tiles_p)   h2_pim_p_BH2->Fill(a,b);
+    // π+ vs p   (기존)
+    for(int a: tiles_pip) for(int b: tiles_p)   h2_pip_p_BH2->Fill(a,b);
     // π(± 합계) 1D
     {
       std::set<int> tiles_pi;
@@ -241,8 +252,8 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
     if(mp_all >= 2){
       N_bh2In_mpge2++;
       for(int a: tiles_pip) for(int b: tiles_pim) h2_pip_pim_BH2_MPge2->Fill(a,b);
-      for(int a: tiles_p)   for(int b: tiles_pbar) h2_p_pbar_BH2_MPge2->Fill(a,b);
-      for(int a: tiles_pip) for(int b: tiles_p)    h2_pip_p_BH2_MPge2->Fill(a,b);
+      for(int a: tiles_pim) for(int b: tiles_p)   h2_pim_p_BH2_MPge2->Fill(a,b);   // [NEW]
+      for(int a: tiles_pip) for(int b: tiles_p)   h2_pip_p_BH2_MPge2->Fill(a,b);
       {
         std::set<int> tiles_pi;
         tiles_pi.insert(tiles_pip.begin(), tiles_pip.end());
@@ -271,12 +282,10 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
     }
     xa->SetNdivisions(NT, false);
     ya->SetNdivisions(NT, false);
-    // 라벨/제목 사이즈 다운
     xa->SetLabelSize(0.020);
     ya->SetLabelSize(0.020);
     xa->SetTitleSize(0.030);
     ya->SetTitleSize(0.030);
-    // 여백 약간 늘림
     gPad->SetLeftMargin(0.12);
     gPad->SetBottomMargin(0.12);
   };
@@ -295,29 +304,33 @@ void HTOF_2D_Hitpattern_10_28(const char* filename="E45.root",
   auto drawAndSave2D = [&](TH2I* h, const char* cname, const char* fname){
     TCanvas* c = new TCanvas(cname, cname, 880, 760);
     h->SetStats(0);
-    setTileLabels2D(h);   // ← 캔버스 생성 후 라벨/폰트 적용
+    setTileLabels2D(h);
     h->Draw("COLZ");
     if(save) c->SaveAs(fname);
   };
   auto drawAndSave1D = [&](TH1I* h, const char* cname, const char* fname){
     TCanvas* c = new TCanvas(cname, cname, 980, 380);
     h->SetStats(0); h->SetLineWidth(2);
-    setTileLabels1D(h);   // ← 캔버스 생성 후 라벨/폰트 적용
+    setTileLabels1D(h);
     h->Draw("hist");
     if(save) c->SaveAs(fname);
   };
 
   TString t(tag); if(t.IsNull()) t = Form("BH2_%d_%d", bh2_lo, bh2_hi);
 
+  // π+ vs π−
   drawAndSave2D(h2_pip_pim_BH2,       "c_pip_pim_BH2",       "HTOF_2D_pip_vs_pim_BH2_"+t+".png");
   drawAndSave2D(h2_pip_pim_BH2_MPge2, "c_pip_pim_BH2_MPge2", "HTOF_2D_pip_vs_pim_BH2_MPge2_"+t+".png");
 
-  drawAndSave2D(h2_p_pbar_BH2,        "c_p_pbar_BH2",        "HTOF_2D_p_vs_pbar_BH2_"+t+".png");
-  drawAndSave2D(h2_p_pbar_BH2_MPge2,  "c_p_pbar_BH2_MPge2",  "HTOF_2D_p_vs_pbar_BH2_MPge2_"+t+".png");
+  // π− vs p  [NEW]
+  drawAndSave2D(h2_pim_p_BH2,         "c_pim_p_BH2",         "HTOF_2D_pim_vs_p_BH2_"+t+".png");
+  drawAndSave2D(h2_pim_p_BH2_MPge2,   "c_pim_p_BH2_MPge2",   "HTOF_2D_pim_vs_p_BH2_MPge2_"+t+".png");
 
+  // π+ vs p  (기존)
   drawAndSave2D(h2_pip_p_BH2,         "c_pip_p_BH2",         "HTOF_2D_pip_vs_p_BH2_"+t+".png");
   drawAndSave2D(h2_pip_p_BH2_MPge2,   "c_pip_p_BH2_MPge2",   "HTOF_2D_pip_vs_p_BH2_MPge2_"+t+".png");
 
+  // π(±) 점유도
   drawAndSave1D(h1_piOcc_BH2,         "c_piOcc_BH2",         "HTOF_1D_piOcc_BH2_"+t+".png");
   drawAndSave1D(h1_piOcc_BH2_MPge2,   "c_piOcc_BH2_MPge2",   "HTOF_1D_piOcc_BH2_MPge2_"+t+".png");
 }
