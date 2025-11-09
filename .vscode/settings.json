@@ -141,6 +141,7 @@
         "Trigger_study_plusreaction_10_28_HTOFselect.C": "cpp",
         "Trigger_study_plusbeam_10_28_HTOFselect.C": "cpp",
         "StatError_select_10_29.C": "cpp",
-        "Trigger_study_minusbeam_11_8.C": "cpp"
+        "Trigger_study_minusbeam_11_8.C": "cpp",
+        "25_11_9_Segmentpair.C": "cpp"
     }
 }
