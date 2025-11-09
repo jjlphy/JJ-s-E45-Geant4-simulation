@@ -1,17 +1,15 @@
 // -*- C++ -*-
-// HTOF_pair_scan_14_27.C  (2025-11-09)
-// - 입력: E45.root, g4hyptpc, BH2 윈도우(예: 4–10), 임계치 파라미터
-// - 출력: Beam 사건(=BH2 in-range) 중, HTOF 인접 페어 (14,15)~(26,27)
-//         가 동시에 유효(hit)인 이벤트 개수 (no-excl vs excl{2..5})
+// HTOF_pair_and_tile_scan_14_27.C  (2025-11-09)
+// Section 1: BH2 특정 세그먼트를 지나는 빔 사건 중,
+//            HTOF 인접 페어 (14,15) .. (26,27) 동시 hit 개수 (no-excl vs excl{2..5})
+// Section 2: BH2 특정 세그먼트를 지나는 빔 사건 중,
+//            단일 타일(14..27) hit 개수와, HTOF MP>=1에서의 "전체 세그먼트 수"를
+//            분모로 한 비율 (no-excl vs excl{2..5})
 //
 // 사용법:
 //   root -l
-//   .L HTOF_pair_scan_14_27.C+
-//   HTOF_pair_scan_14_27("E45.root","g4hyptpc", 4,10, 0.10,2.0, 5.0,10.0);
-//
-// 메모:
-//  - BH2/HTOF 브랜치: vector<TParticle>
-//  - *_edep 브랜치가 있으면 우선 사용, 없으면 TParticle::Weight 사용
+//   .L HTOF_pair_and_tile_scan_14_27.C+
+//   HTOF_pair_and_tile_scan_14_27("E45.root","g4hyptpc", 4,10, 0.10,2.0, 5.0,10.0);
 
 #include "TFile.h"
 #include "TTree.h"
@@ -26,7 +24,7 @@
 #include <iomanip>
 #include <cmath>
 
-namespace HPS { // HTOF Pair Scan
+namespace HPS {
 
 static const int    kNBH2Seg   = 15;     // 0..14
 static const double kBH2_x0    = -10.0;  // [mm]
@@ -53,20 +51,19 @@ static inline int MapBH2_WorldToSeg(double x, double, double){
   if(idx<0) idx=0; if(idx>=kNBH2Seg) idx=kNBH2Seg-1;
   return idx;
 }
-
 static inline bool PairHit(const std::set<int>& tiles, int a, int b){
   return tiles.count(a) && tiles.count(b);
 }
 
 } // namespace HPS
 
-void HTOF_pair_scan_14_27(const char* filename,
-                          const char* treename="g4hyptpc",
-                          int bh2_lo=4, int bh2_hi=10,
-                          double mipFrac=0.10,
-                          double mipMeVperCm=2.0,
-                          double BH2_thickness_mm=5.0,
-                          double HTOF_thickness_mm=10.0)
+void HTOF_pair_and_tile_scan_14_27(const char* filename,
+                                   const char* treename="g4hyptpc",
+                                   int bh2_lo=4, int bh2_hi=10,
+                                   double mipFrac=0.10,
+                                   double mipMeVperCm=2.0,
+                                   double BH2_thickness_mm=5.0,
+                                   double HTOF_thickness_mm=10.0)
 {
   using namespace HPS;
 
@@ -90,22 +87,34 @@ void HTOF_pair_scan_14_27(const char* filename,
   const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);
   const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);
 
-  // 페어 목록: (14,15) .. (26,27)  → 13개
+  // 인접 페어 목록: (14,15) .. (26,27)
   std::vector<std::pair<int,int>> pairs;
   for(int a=14; a<=26; ++a) pairs.emplace_back(a, a+1);
 
+  // 단일 타일 목록: 14..27
+  std::vector<int> tiles_list;
+  for(int t=14; t<=27; ++t) tiles_list.push_back(t);
+
   // 카운터
   long long N_total=0, N_beam=0;
-  std::vector<long long> cnt_noexcl(pairs.size(), 0);
-  std::vector<long long> cnt_excl(pairs.size(),   0);
 
-  const std::set<int> EXCL_2_5 = {2,3,4,5}; // MP/유효성 판정에서 제외할 타일(요구사항)
+  // Section1: pair counts
+  std::vector<long long> pair_noexcl(pairs.size(), 0);
+  std::vector<long long> pair_excl  (pairs.size(), 0);
+
+  // Section2: tile counts + denominators (MP>=1에서의 전체 세그먼트 수)
+  std::vector<long long> tile_noexcl(tiles_list.size(), 0);
+  std::vector<long long> tile_excl  (tiles_list.size(), 0);
+  long long denom_noexcl = 0; // Σ (유효 타일 수) over Beam events with MP>=1 (no-excl)
+  long long denom_excl   = 0; // Σ (유효 타일 수) over Beam events with MP>=1 (excl{2..5})
+
+  const std::set<int> EXCL_2_5 = {2,3,4,5};
 
   const Long64_t N=T->GetEntries();
   for(Long64_t ie=0; ie<N; ++ie){
     T->GetEntry(ie); N_total++;
 
-    // ---- BH2: in-range? ----
+    // ---- BH2: Beam in-range ----
     std::map<int,double> bh2E;
     if(BH2){
       for(size_t i=0;i<BH2->size();++i){
@@ -123,7 +132,7 @@ void HTOF_pair_scan_14_27(const char* filename,
     if(!beam) continue;
     N_beam++;
 
-    // ---- HTOF 누적 → 유효 타일 집합 (no-excl / excl{2..5}) ----
+    // ---- HTOF 누적 (no-excl / excl{2..5}) ----
     std::map<int,double> acc_noexcl, acc_excl;
     if(HTOF){
       for(size_t i=0;i<HTOF->size();++i){
@@ -141,33 +150,63 @@ void HTOF_pair_scan_14_27(const char* filename,
     for(const auto& kv:acc_noexcl) if(kv.second>=thrHTOF) tiles_noexcl.insert(kv.first);
     for(const auto& kv:acc_excl)   if(kv.second>=thrHTOF) tiles_excl.insert(kv.first);
 
-    // ---- 페어 히트 판정 & 카운트 ----
+    // ---- Section 1: 인접 페어 카운트 (Beam 기준) ----
     for(size_t ip=0; ip<pairs.size(); ++ip){
       const int a = pairs[ip].first;
       const int b = pairs[ip].second;
-      if(PairHit(tiles_noexcl,a,b)) cnt_noexcl[ip]++;
-      if(PairHit(tiles_excl,  a,b)) cnt_excl[ip]++;
+      if(PairHit(tiles_noexcl,a,b)) pair_noexcl[ip]++;
+      if(PairHit(tiles_excl,  a,b)) pair_excl[ip]++;
+    }
+
+    // ---- Section 2: 단일 타일 점유도 (MP>=1에서만 집계) ----
+    // 분모 = MP>=1 만족하는 이벤트에서의 "유효 타일 수" 총합
+    if(!tiles_noexcl.empty()) denom_noexcl += (long long)tiles_noexcl.size();
+    if(!tiles_excl.empty())   denom_excl   += (long long)tiles_excl.size();
+
+    // 타일별 카운트 (그 타일이 유효(hit)면 +1)
+    for(size_t it=0; it<tiles_list.size(); ++it){
+      int t = tiles_list[it];
+      if(tiles_noexcl.count(t)) tile_noexcl[it]++;
+      if(tiles_excl.count(t))   tile_excl[it]++;
     }
   }
 
   // ---- 출력 ----
+  auto pct_beam = [&](long long x)->double{
+    return (N_beam>0)? (100.0*double(x)/double(N_beam)) : 0.0;
+  };
+  auto pct_denom = [&](long long x, long long denom)->double{
+    return (denom>0)? (100.0*double(x)/double(denom)) : 0.0;
+  };
+
   std::cout<<std::fixed<<std::setprecision(3);
   std::cout<<"[INFO] BH2 thr="<<thrBH2<<" MeV, HTOF thr="<<thrHTOF<<" MeV\n";
   std::cout<<"[INFO] BH2 window: "<<bh2_lo<<"–"<<bh2_hi<<"\n";
   std::cout<<"Total events : "<<N_total<<"\n";
   std::cout<<"Beam (BH2 in-range) : "<<N_beam<<"\n\n";
 
-  auto pct = [&](long long x)->double{
-    return (N_beam>0)? (100.0*double(x)/double(N_beam)) : 0.0;
-  };
-
-  std::cout<<"== HTOF adjacent-pair hits among Beam ==\n";
-  std::cout<<" Pair    no-excl(count, %)      excl{2–5}(count, %)\n";
+  // ===== Section 1 =====
+  std::cout<<"== Section 1: Adjacent-pair hits among Beam ==\n";
+  std::cout<<" Pair    no-excl(count, %Beam)      excl{2–5}(count, %Beam)\n";
   for(size_t ip=0; ip<pairs.size(); ++ip){
     const auto& pr = pairs[ip];
     std::cout<<" ("<<std::setw(2)<<pr.first<<","<<std::setw(2)<<pr.second<<") : "
-             <<std::setw(8)<<cnt_noexcl[ip]<<" ("<<std::setw(6)<<pct(cnt_noexcl[ip])<<"%)"
+             <<std::setw(8)<<pair_noexcl[ip]<<" ("<<std::setw(7)<<pct_beam(pair_noexcl[ip])<<"%)"
              <<"    "
-             <<std::setw(8)<<cnt_excl[ip]  <<" ("<<std::setw(6)<<pct(cnt_excl[ip])  <<"%)\n";
+             <<std::setw(8)<<pair_excl[ip]  <<" ("<<std::setw(7)<<pct_beam(pair_excl[ip])  <<"%)\n";
+  }
+  std::cout<<"\n";
+
+  // ===== Section 2 =====
+  std::cout<<"== Section 2: Single-tile occupancy among Beam (MP>=1 only)\n";
+  std::cout<<" Denominator (no-excl) = Σ valid tiles over events with MP>=1 = "<<denom_noexcl<<"\n";
+  std::cout<<" Denominator (excl{2–5}) = Σ valid tiles over events with MP>=1 = "<<denom_excl<<"\n";
+  std::cout<<" Tile   no-excl(count, %of Σtiles_MP>=1)    excl{2–5}(count, %of Σtiles_MP>=1)\n";
+  for(size_t it=0; it<tiles_list.size(); ++it){
+    int t = tiles_list[it];
+    std::cout<<"  "<<std::setw(2)<<t<<"   "
+             <<std::setw(8)<<tile_noexcl[it]<<" ("<<std::setw(7)<<pct_denom(tile_noexcl[it], denom_noexcl)<<"%)"
+             <<"            "
+             <<std::setw(8)<<tile_excl[it]  <<" ("<<std::setw(7)<<pct_denom(tile_excl[it],   denom_excl)  <<"%)\n";
   }
 }
