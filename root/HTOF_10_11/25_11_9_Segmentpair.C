@@ -1,10 +1,7 @@
 // -*- C++ -*-
-// HTOF_pair_and_tile_scan_14_27.C  (2025-11-09)
-// Section 1: BH2 특정 세그먼트를 지나는 빔 사건 중,
-//            HTOF 인접 페어 (14,15) .. (26,27) 동시 hit 개수 (no-excl vs excl{2..5})
-// Section 2: BH2 특정 세그먼트를 지나는 빔 사건 중,
-//            단일 타일(14..27) hit 개수와, HTOF MP>=1에서의 "전체 세그먼트 수"를
-//            분모로 한 비율 (no-excl vs excl{2..5})
+// HTOF_pair_and_tile_scan_14_27.C  (2025-11-09, histo added)
+// Section 1: 인접 페어 (14,15) .. (26,27) %Beam (no-excl vs excl{2..5}) → Canvas A
+// Section 2: 단일 타일 14..27  % of Σtiles(MP>=1) (no-excl vs excl{2..5}) → Canvas B
 //
 // 사용법:
 //   root -l
@@ -16,6 +13,11 @@
 #include "TParticle.h"
 #include "TSystem.h"
 #include "TInterpreter.h"
+#include "TCanvas.h"
+#include "TH1D.h"
+#include "TLegend.h"
+#include "TStyle.h"
+#include "TLine.h"
 #include <vector>
 #include <map>
 #include <set>
@@ -67,6 +69,12 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
 {
   using namespace HPS;
 
+  // ROOT style (가독성)
+  gStyle->SetOptStat(0);
+  gStyle->SetTitleFontSize(0.045);
+  gStyle->SetLabelSize(0.035,"XY");
+  gStyle->SetTitleSize(0.045,"XY");
+
   // open & tree
   TFile* f=TFile::Open(filename,"READ");
   if(!f||f->IsZombie()){ std::cerr<<"[ERR] open "<<filename<<" failed\n"; return; }
@@ -87,26 +95,26 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
   const double thrBH2  = MIPThrMeV(mipFrac,mipMeVperCm,BH2_thickness_mm);
   const double thrHTOF = MIPThrMeV(mipFrac,mipMeVperCm,HTOF_thickness_mm);
 
-  // 인접 페어 목록: (14,15) .. (26,27)
+  // 인접 페어 (14,15) .. (26,27) 13개
   std::vector<std::pair<int,int>> pairs;
   for(int a=14; a<=26; ++a) pairs.emplace_back(a, a+1);
 
-  // 단일 타일 목록: 14..27
+  // 단일 타일 14..27 (14개)
   std::vector<int> tiles_list;
   for(int t=14; t<=27; ++t) tiles_list.push_back(t);
 
   // 카운터
   long long N_total=0, N_beam=0;
 
-  // Section1: pair counts
+  // Section1: pairs
   std::vector<long long> pair_noexcl(pairs.size(), 0);
   std::vector<long long> pair_excl  (pairs.size(), 0);
 
-  // Section2: tile counts + denominators (MP>=1에서의 전체 세그먼트 수)
+  // Section2: tiles + denominators
   std::vector<long long> tile_noexcl(tiles_list.size(), 0);
   std::vector<long long> tile_excl  (tiles_list.size(), 0);
-  long long denom_noexcl = 0; // Σ (유효 타일 수) over Beam events with MP>=1 (no-excl)
-  long long denom_excl   = 0; // Σ (유효 타일 수) over Beam events with MP>=1 (excl{2..5})
+  long long denom_noexcl = 0;
+  long long denom_excl   = 0;
 
   const std::set<int> EXCL_2_5 = {2,3,4,5};
 
@@ -140,9 +148,7 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
         const int tid = p.GetStatusCode();
         if(!(0<=tid && tid<kNHTOF)) continue;
         const double ed=(hasHTOFedep && HTOF_edep && i<HTOF_edep->size())? HTOF_edep->at(i) : p.GetWeight();
-        // no-excl: 전 타일 누적
         acc_noexcl[tid] += ed;
-        // excl: 2..5 제외 후 누적
         if(!EXCL_2_5.count(tid)) acc_excl[tid] += ed;
       }
     }
@@ -150,7 +156,7 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
     for(const auto& kv:acc_noexcl) if(kv.second>=thrHTOF) tiles_noexcl.insert(kv.first);
     for(const auto& kv:acc_excl)   if(kv.second>=thrHTOF) tiles_excl.insert(kv.first);
 
-    // ---- Section 1: 인접 페어 카운트 (Beam 기준) ----
+    // ---- Section 1: 페어 카운트 (Beam 기준) ----
     for(size_t ip=0; ip<pairs.size(); ++ip){
       const int a = pairs[ip].first;
       const int b = pairs[ip].second;
@@ -158,12 +164,10 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
       if(PairHit(tiles_excl,  a,b)) pair_excl[ip]++;
     }
 
-    // ---- Section 2: 단일 타일 점유도 (MP>=1에서만 집계) ----
-    // 분모 = MP>=1 만족하는 이벤트에서의 "유효 타일 수" 총합
+    // ---- Section 2: 단일 타일 점유도 (MP>=1에서 집계) ----
     if(!tiles_noexcl.empty()) denom_noexcl += (long long)tiles_noexcl.size();
     if(!tiles_excl.empty())   denom_excl   += (long long)tiles_excl.size();
 
-    // 타일별 카운트 (그 타일이 유효(hit)면 +1)
     for(size_t it=0; it<tiles_list.size(); ++it){
       int t = tiles_list[it];
       if(tiles_noexcl.count(t)) tile_noexcl[it]++;
@@ -171,7 +175,7 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
     }
   }
 
-  // ---- 출력 ----
+  // ---- 터미널 출력 (요약) ----
   auto pct_beam = [&](long long x)->double{
     return (N_beam>0)? (100.0*double(x)/double(N_beam)) : 0.0;
   };
@@ -185,7 +189,6 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
   std::cout<<"Total events : "<<N_total<<"\n";
   std::cout<<"Beam (BH2 in-range) : "<<N_beam<<"\n\n";
 
-  // ===== Section 1 =====
   std::cout<<"== Section 1: Adjacent-pair hits among Beam ==\n";
   std::cout<<" Pair    no-excl(count, %Beam)      excl{2–5}(count, %Beam)\n";
   for(size_t ip=0; ip<pairs.size(); ++ip){
@@ -197,7 +200,6 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
   }
   std::cout<<"\n";
 
-  // ===== Section 2 =====
   std::cout<<"== Section 2: Single-tile occupancy among Beam (MP>=1 only)\n";
   std::cout<<" Denominator (no-excl) = Σ valid tiles over events with MP>=1 = "<<denom_noexcl<<"\n";
   std::cout<<" Denominator (excl{2–5}) = Σ valid tiles over events with MP>=1 = "<<denom_excl<<"\n";
@@ -209,4 +211,71 @@ void HTOF_pair_and_tile_scan_14_27(const char* filename,
              <<"            "
              <<std::setw(8)<<tile_excl[it]  <<" ("<<std::setw(7)<<pct_denom(tile_excl[it],   denom_excl)  <<"%)\n";
   }
+
+  // ====== 히스토그램 생성 ======
+  // Section 1: Pair %Beam
+  const int nPairs = (int)pairs.size();
+  TH1D* hPair_noex = new TH1D("hPair_noex","Section 1: Adjacent pairs %Beam;HTOF pair;Fraction of Beam [%]", nPairs, 0.5, nPairs+0.5);
+  TH1D* hPair_excl = new TH1D("hPair_excl","Section 1: Adjacent pairs %Beam;HTOF pair;Fraction of Beam [%]", nPairs, 0.5, nPairs+0.5);
+  for(int i=1;i<=nPairs;++i){
+    const int a = pairs[i-1].first;
+    const int b = pairs[i-1].second;
+    hPair_noex->GetXaxis()->SetBinLabel(i, Form("(%d,%d)",a,b));
+    hPair_excl->GetXaxis()->SetBinLabel(i, Form("(%d,%d)",a,b));
+    hPair_noex->SetBinContent(i, pct_beam(pair_noexcl[i-1]));
+    hPair_excl->SetBinContent(i, pct_beam(pair_excl[i-1]));
+  }
+  hPair_noex->SetLineColor(kBlue+1);
+  hPair_noex->SetMarkerColor(kBlue+1);
+  hPair_noex->SetMarkerStyle(20);
+  hPair_excl->SetLineColor(kRed+1);
+  hPair_excl->SetMarkerColor(kRed+1);
+  hPair_excl->SetMarkerStyle(24);
+
+  TCanvas* cA = new TCanvas("cA","Pairs %Beam", 1100, 420);
+  cA->SetLeftMargin(0.08); cA->SetBottomMargin(0.25); // 라벨 겹침 방지
+  hPair_noex->SetMinimum(0);
+  hPair_noex->Draw("HIST");
+  hPair_excl->Draw("HIST SAME");
+
+  auto legA = new TLegend(0.78,0.78,0.98,0.98);
+  legA->AddEntry(hPair_noex,"no-excl","l");
+  legA->AddEntry(hPair_excl,"excl{2-5}","l");
+  legA->Draw();
+
+  cA->SaveAs("HTOF_pairs_14_27_percentBeam.png");
+
+  // Section 2: Tiles % of Σtiles(MP>=1)
+  const int nTiles = (int)tiles_list.size();
+  TH1D* hTile_noex = new TH1D("hTile_noex","Section 2: Tile share % of #Sigma tiles (MP#geq1);HTOF tile;Share [%]", nTiles, 0.5, nTiles+0.5);
+  TH1D* hTile_excl = new TH1D("hTile_excl","Section 2: Tile share % of #Sigma tiles (MP#geq1);HTOF tile;Share [%]", nTiles, 0.5, nTiles+0.5);
+  for(int i=1;i<=nTiles;++i){
+    const int t = tiles_list[i-1];
+    hTile_noex->GetXaxis()->SetBinLabel(i, Form("%d",t));
+    hTile_excl->GetXaxis()->SetBinLabel(i, Form("%d",t));
+    hTile_noex->SetBinContent(i, pct_denom(tile_noexcl[i-1], denom_noexcl));
+    hTile_excl->SetBinContent(i,   pct_denom(tile_excl[i-1],   denom_excl));
+  }
+  hTile_noex->SetLineColor(kBlue+1);
+  hTile_noex->SetMarkerColor(kBlue+1);
+  hTile_noex->SetMarkerStyle(20);
+  hTile_excl->SetLineColor(kRed+1);
+  hTile_excl->SetMarkerColor(kRed+1);
+  hTile_excl->SetMarkerStyle(24);
+
+  TCanvas* cB = new TCanvas("cB","Tiles % of sum", 1100, 420);
+  cB->SetLeftMargin(0.08); cB->SetBottomMargin(0.18);
+  hTile_noex->SetMinimum(0);
+  hTile_noex->Draw("HIST");
+  hTile_excl->Draw("HIST SAME");
+
+  auto legB = new TLegend(0.78,0.78,0.98,0.98);
+  legB->AddEntry(hTile_noex,"no-excl","l");
+  legB->AddEntry(hTile_excl,"excl{2-5}","l");
+  legB->Draw();
+
+  cB->SaveAs("HTOF_tiles_14_27_shareOfSum.png");
+
+  std::cout<<"\n[Saved] HTOF_pairs_14_27_percentBeam.png\n";
+  std::cout<<"[Saved] HTOF_tiles_14_27_shareOfSum.png\n";
 }
