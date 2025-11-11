@@ -11,7 +11,7 @@
 // Usage:
 //   root -l
 //   .L Trigger_study_minusbeam_11_8_.C+
-//   Trigger_study_minusbeam_11_8("E45.root","g4hyptpc",
+//   Trigger_study_minusbeam_11_8("E45.root","g4hyptpc",4,10, 0.10,2.0, 5.0,10.0, /*excludeTilesCSV=*/"",/*primaryOriginCode=*/0, /*excludePDGCSV=*/"", /*TOPN=*/20);
 //       4,10, 0.10,2.0, 5.0,10.0, /*excludeTilesCSV=*/"",
 //       /*primaryOriginCode=*/0, /*excludePDGCSV=*/"", /*TOPN=*/20);
 
